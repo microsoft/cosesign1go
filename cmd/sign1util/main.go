@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Microsoft/cosesign1go/cosesign1"
+	"github.com/Microsoft/cosesign1go/pkg/cosesign1"
 	didx509resolver "github.com/Microsoft/didx509go/did-x509-resolver"
 	"github.com/urfave/cli"
 )

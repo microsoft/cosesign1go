@@ -32,8 +32,8 @@ cose: infra.rego.cose
 # Use a local linux build of the tool for the purposes of this Makefile - ie assume using in wsl.
 # Usually sign1util.exe is a windows exe in /mnt/c/ContainerPlat aka c:\ContainerPlat but that is not certain.
 
-sign1util: ../cmd/sign1util/main.go *.go
-	go build ../cmd/sign1util
+sign1util: ../../cmd/sign1util/main.go *.go
+	go build ../../cmd/sign1util
 
 infra.rego.cose: infra.rego.base64 chain.pem leaf.private.pem sign1util
 	./sign1util create -algo ES384 -chain chain.pem -claims infra.rego.base64 -key leaf.private.pem -out $@ -issuer TestIssuer -feed TestFeed -salt zero
