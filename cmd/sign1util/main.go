@@ -294,6 +294,10 @@ var didX509Cmd = cli.Command{
 			Usage: "did:509 policy, can be one of [cn|eku|custom]",
 			Value: "cn",
 		},
+		cli.BoolFlag{
+			Name:  "verbose",
+			Usage: "verbose output (optional)",
+		},
 	},
 	Action: func(ctx *cli.Context) error {
 		chainFilename := ctx.String("chain")
