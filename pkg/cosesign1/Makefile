@@ -89,6 +89,8 @@ did-fail: did-fail-subject did-fail-fingerprint
 infra.rego.base64: infra.rego
 	base64 infra.rego > infra.rego.base64
 
+test-all: print show didx509 did-check did-from-cose did-fail
+
 clean:
 	$(MAKE) -f Makefile.certs $@
 	rm -f infra.rego.base64 infra.rego.cose sign1util
