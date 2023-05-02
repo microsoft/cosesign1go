@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/Microsoft/cosesign1go/pkg/cosesign1"
-	didx509resolver "github.com/Microsoft/didx509go/did-x509-resolver"
+	didx509resolver "github.com/Microsoft/didx509go/pkg/did-x509-resolver"
 	"github.com/urfave/cli"
 )
 
