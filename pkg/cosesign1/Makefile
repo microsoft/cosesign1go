@@ -49,7 +49,7 @@ show: sign1util
 
 
 didx509: chain.pem sign1util
-	./sign1util did-x509 -chain chain.pem -i 1 -policy "subject:CN:Test Leaf (DO NOT TRUST)" -verbose -broken-flag
+	./sign1util did-x509 -chain chain.pem -i 1 -policy "subject:CN:Test Leaf (DO NOT TRUST)" -verbose
 
 # for this to pass the did:x509 fingerprint (RgpNsHOK5hPlCAfTtiGY_BcDhFRxQbJnhlxNDhxps6U here) needs to be the one output from make print
 did-check: chain.pem infra.rego.cose sign1util
