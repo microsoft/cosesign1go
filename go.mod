@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	github.com/Microsoft/didx509go v0.0.2
-	github.com/sirupsen/logrus v1.9.0
+	github.com/sirupsen/logrus v1.9.3
 	github.com/urfave/cli v1.22.13
 	github.com/veraison/go-cose v1.0.0
 )
