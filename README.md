@@ -5,6 +5,14 @@
 
 A Go library to handle COSE Sign1 documents
 
+COSE_Sign1 envelopes are signed wrappers for arbitrary data. See https://datatracker.ietf.org/doc/html/rfc8152.
+
+## Building
+
+Usually the library is consumed by a larger application. However, we provide a small utility (`sign1util`) that exercises the library and is useful for exploring COSE_Sign1 documents.
+
+```go build -o sign1util cmd/sign1util/main.go```
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
