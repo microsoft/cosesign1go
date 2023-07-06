@@ -9,7 +9,7 @@ fragments in this repository. It is not intended to be used by "end users".
 Usage is of the form `sign1util <cmd> flag1 value1 flag2 value2...`
 
 The output is generally a COSE Sign1 wrapped payload. COSE Sign1 is a signed binary blob that can contain arbitrary binary data.
-For a fragment the COSE Sign1 document must have been signed by a trusted party (aka "issuer") and use the did matching the cert chain leading to the private signing key as the issuer. Below that chain is `chain.pem` and the private key `leaf.private.pem`. When creating a fragment the issuer can be set using this tool or via the corporate signing authority's COSE Sign1 generating service. It is very important that these private keys and associated signing services are properly controlled. The signing offered by sign1util is by way of an example and useful for testing. It does not have facilities to use a secure key store.
+For a fragment, the COSE Sign1 document must have been signed by a trusted party (aka "issuer") and use the did matching the cert chain leading to the private signing key as the issuer. Below that chain is `chain.pem` and the private key `leaf.private.pem`. When creating a fragment the issuer can be set using this tool or via the corporate signing authority's COSE Sign1 generating service. It is very important that these private keys and associated signing services are properly controlled. The signing offered by sign1util is by way of an example and useful for testing. It does not have facilities to use a secure key store.
 
 Security policy fragments are checked for having the correct issuer did:x509 and feed as allowed by user security policy. The did must match the chain and key used to sign the document.
 
