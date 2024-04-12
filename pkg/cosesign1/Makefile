@@ -30,6 +30,14 @@ all: chain.pem cose test-fail test-pass
 
 cose: infra.rego.cose
 
+%.pem:
+	 $(MAKE) -f Makefile.certs chain.pem
+
+ISSUER_DID = $(shell ./sign1util did-x509 -chain chain.pem -policy cn)
+DID_FINGERPRINT = $(shell ./sign1util did-x509 -chain chain.pem -policy cn | cut -d: -f5)
+FEED = acceuroperegistry.azurecr.io/infra
+
+
 # from these media types have to match containerd. The also need to change and the security policy one ought to be x-ms-ccepolicy-frag
 #     fragment atrifact type = application/x-ms-ccepolicy-frag
 #     fragment media type = application/cose-x509+rego
@@ -46,8 +54,8 @@ sign1util: ../../cmd/sign1util/main.go *.go
 
 %.rego.cose: %.rego chain.pem leaf.private.pem sign1util
 	./sign1util create -algo ES384 -chain chain.pem -claims $< -key leaf.private.pem -out $@ -salt zero \
-	-feed acceuroperegistry.azurecr.io/infra:latest -content-type application/unknown+rego \
- 	-issuer TestIssuer -feed TestFeed
+	-feed $(FEED) -content-type application/unknown+rego \
+ 	-issuer $(ISSUER_DID)
 
 print: infra.rego.cose sign1util
 	./sign1util chain -in $< > tmp.chain.pem
@@ -60,9 +68,6 @@ show: sign1util
 
 didx509: chain.pem sign1util
 	./sign1util did-x509 -chain chain.pem -i 1 -policy "subject:CN:Test Leaf (DO NOT TRUST)" -verbose
-
-ISSUER_DID = $(shell ./sign1util did-x509 -chain chain.pem -policy cn)
-DID_FINGERPRINT = $(shell ./sign1util did-x509 -chain chain.pem -policy cn | cut -d: -f5)
 
 info: chain.pem sign1util
 	@echo "ISSUER_DID: $(ISSUER_DID)"
@@ -113,8 +118,6 @@ test-fail: did-fail
 #	--subject ${INFRA_IMAGE} \
 #	./infra.rego.cose:application/cose-x509+rego
 
-%.pem:
-	 $(MAKE) -f Makefile.certs chain.pem
 
 
 clean:
