@@ -99,6 +99,8 @@ did-fail: did-fail-subject did-fail-fingerprint
 # can be confusing
 test: test-pass test-fail
 
+test-all: test
+
 # positive tests
 test-pass: print show didx509 did-check did-from-cose
 
