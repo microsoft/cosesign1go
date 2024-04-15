@@ -3,7 +3,7 @@ module github.com/Microsoft/cosesign1go
 go 1.20
 
 require (
-	github.com/Microsoft/didx509go v0.0.2
+	github.com/Microsoft/didx509go v0.0.3
 	github.com/sirupsen/logrus v1.9.3
 	github.com/urfave/cli v1.22.14
 	github.com/veraison/go-cose v1.1.0
