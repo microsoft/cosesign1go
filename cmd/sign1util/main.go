@@ -49,7 +49,8 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		if err == nil {
 			fmt.Fprintf(os.Stdout, "DID resolvers passed:\n%s\n", didDoc)
 		} else {
-			fmt.Fprintf(os.Stdout, "DID resolvers failed: err: %s doc:\n%s\n", err.Error(), didDoc)
+			// all the error paths return an empty string, so we can just print the error
+			fmt.Fprintf(os.Stdout, "DID resolvers failed: err: %s\n", err.Error())
 		}
 	}
 	return unpacked, err
