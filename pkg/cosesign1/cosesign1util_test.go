@@ -48,14 +48,22 @@ var certChainPEM string
 
 func TestMain(m *testing.M) {
 	fmt.Println("Generating files...")
-
-	err := exec.Command("make", "chain.pem", "infra.rego.cose").Run()
+	makeCleanOut, err := exec.Command("make", "clean").CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to build the required test files: %s", err)
+		fmt.Fprintf(os.Stderr, "Failed to clean up: %s\n", err)
+		fmt.Fprintf(os.Stderr, string(makeCleanOut))
 		os.Exit(1)
 	}
 
-	fragmentRego = readFileStringOrExit("infra.rego.base64")
+	outputBytes, err := exec.Command("make", "chain.pem", "infra.rego.cose", "leaf.private.pem").CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to build the required test files: %s", err)
+		fmt.Fprintf(os.Stderr, string(outputBytes))
+		os.Exit(1)
+	}
+	fmt.Println(string(outputBytes))
+
+	fragmentRego = readFileStringOrExit("infra.rego")
 	fragmentCose = readFileBytesOrExit("infra.rego.cose")
 	leafPrivatePem = readFileStringOrExit("leaf.private.pem")
 	leafCertPEM = readFileStringOrExit("leaf.cert.pem")
@@ -85,7 +93,7 @@ func Test_UnpackAndValidateCannedFragment(t *testing.T) {
 	unpacked, err := UnpackAndValidateCOSE1CertChain(fragmentCose)
 
 	if err != nil {
-		t.Errorf("UnpackAndValidateCOSE1CertChain failed: %s", err.Error())
+		t.Fatalf("UnpackAndValidateCOSE1CertChain failed: %s", err)
 	}
 
 	iss := unpacked.Issuer
@@ -101,17 +109,17 @@ func Test_UnpackAndValidateCannedFragment(t *testing.T) {
 	if !comparePEMs(pubcert, leafCertPEM) {
 		t.Fatal("pubcert did not match")
 	}
-	if cty != "application/unknown+json" {
-		t.Fatal("cty did not match")
+	if cty != "application/unknown+rego" {
+		t.Fatalf("cty did not match: %s", cty)
 	}
 	if payload != fragmentRego {
 		t.Fatal("payload did not match")
 	}
 	if iss != "TestIssuer" {
-		t.Fatal("iss did not match")
+		t.Fatalf("iss did not match: %s", iss)
 	}
 	if feed != "TestFeed" {
-		t.Fatal("feed did not match")
+		t.Fatalf("feed did not match: %s", feed)
 	}
 }
 
@@ -132,13 +140,13 @@ func Test_UnpackAndValidateCannedFragmentCorrupted(t *testing.T) {
 
 // Use CreateCoseSign1 to make a document that should match the one made by the makefile
 func Test_CreateCoseSign1Fragment(t *testing.T) {
-	var raw, err = CreateCoseSign1([]byte(fragmentRego), "TestIssuer", "TestFeed", "application/unknown+json", []byte(certChainPEM), []byte(leafPrivatePem), "zero", cose.AlgorithmES384)
+	var raw, err = CreateCoseSign1([]byte(fragmentRego), "TestIssuer", "TestFeed", "application/unknown+rego", []byte(certChainPEM), []byte(leafPrivatePem), "zero", cose.AlgorithmES384)
 	if err != nil {
 		t.Fatalf("CreateCoseSign1 failed: %s", err)
 	}
 
 	if len(raw) != len(fragmentCose) {
-		t.Fatal("created fragment length does not match expected")
+		t.Fatalf("created fragment length (%d) does not match expected (%d)", len(raw), len(fragmentCose))
 	}
 
 	for i := range raw {

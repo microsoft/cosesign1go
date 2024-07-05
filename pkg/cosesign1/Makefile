@@ -26,6 +26,11 @@
 
 # note test-fail is expected to fail
 
+AUTOPARSE_CHAIN:=0
+ISSUER_DID:="TestIssuer"
+FEED:="TestFeed"
+DID_FINGERPRINT:=""
+
 all: chain.pem cose test-fail test-pass
 
 cose: infra.rego.cose
@@ -33,10 +38,10 @@ cose: infra.rego.cose
 %.pem:
 	 $(MAKE) -f Makefile.certs chain.pem
 
+ifeq "$(AUTOPARSE_CHAIN)" "1"
 ISSUER_DID = $(shell ./sign1util did-x509 -chain chain.pem -policy cn)
 DID_FINGERPRINT = $(shell ./sign1util did-x509 -chain chain.pem -policy cn | cut -d: -f5)
-FEED = acceuroperegistry.azurecr.io/infra
-
+endif
 
 # from these media types have to match containerd. The also need to change and the security policy one ought to be x-ms-ccepolicy-frag
 #     fragment atrifact type = application/x-ms-ccepolicy-frag
@@ -124,4 +129,4 @@ test-fail: did-fail
 
 clean:
 	$(MAKE) -f Makefile.certs $@
-	rm -f infra.rego.base64 infra.rego.cose sign1util
+	rm -f infra.rego.cose sign1util
