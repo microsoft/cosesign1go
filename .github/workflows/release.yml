@@ -1,0 +1,54 @@
+name: Build & Release
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  GO_VERSION: "1.22.x"
+
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - run: go build ./cmd/sign1util
+      - run: go build ./cmd/sign1util
+        env:
+          GOOS: windows
+          GOARCH: amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: |
+            sign1util.exe
+            sign1util
+
+  draft_release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+
+      - name: Publish draft release
+        uses: softprops/action-gh-release@v2.0.8
+        with:
+          # This is to make sure that the release is not created if a non-rc tag is pushed
+          draft: true
+          generate_release_notes: true
+          files: |
+            sign1util.exe
+            sign1util
