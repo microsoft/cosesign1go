@@ -63,6 +63,8 @@ type UnpackedCoseSign1 struct {
 	ChainPem    string
 	Payload     []byte
 	CertChain   []*x509.Certificate
+	Protected   cose.ProtectedHeader
+	Unprotected cose.UnprotectedHeader
 }
 
 // This function is rather unpleasant in that it both decodes the COSE Sign1 document and its various
@@ -177,8 +179,21 @@ func UnpackAndValidateCOSE1CertChain(raw []byte) (*UnpackedCoseSign1, error) {
 		return nil, err
 	}
 
-	issuer := getStringValue(protected, "iss")
-	feed := getStringValue(protected, "feed")
+	// cwt, hasCwt := protected[cose.HeaderLabelCWT]
+	cwt, hasCwt := protected[int64(15)]
+	var issuer, feed string
+	if hasCwt {
+		cwt, ok := cwt.(map[interface{}]interface{})
+		if !ok {
+			return nil, fmt.Errorf("wrong cwt data type")
+		}
+		issuer = getStringValue(cwt, int64(1))
+		feed = getStringValue(cwt, int64(2))
+	} else {
+		issuer = getStringValue(protected, "iss")
+		feed = getStringValue(protected, "feed")
+	}
+
 	contenttype := getStringValue(protected, cose.HeaderLabelContentType)
 
 	return &UnpackedCoseSign1{
@@ -190,5 +205,7 @@ func UnpackAndValidateCOSE1CertChain(raw []byte) (*UnpackedCoseSign1, error) {
 		ContentType: contenttype,
 		Payload:     msg.Payload,
 		CertChain:   chain,
+		Protected:   protected,
+		Unprotected: msg.Headers.Unprotected,
 	}, nil
 }

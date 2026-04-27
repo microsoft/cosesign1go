@@ -8,7 +8,39 @@ import (
 	"github.com/Microsoft/cosesign1go/pkg/cosesign1"
 	didx509resolver "github.com/Microsoft/didx509go/pkg/did-x509-resolver"
 	"github.com/urfave/cli"
+	"github.com/veraison/go-cose"
 )
+
+// formatValue formats a CBOR-decoded value in a human-readable way that
+// preserves integer keys (unlike JSON).
+func formatValue(v interface{}) string {
+	switch v := v.(type) {
+	case map[interface{}]interface{}:
+		parts := make([]string, 0, len(v))
+		for key, val := range v {
+			parts = append(parts, fmt.Sprintf("%s: %s", formatValue(key), formatValue(val)))
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	case []interface{}:
+		parts := make([]string, 0, len(v))
+		for _, val := range v {
+			parts = append(parts, formatValue(val))
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case []byte:
+		return fmt.Sprintf("0x%x", v)
+	case string:
+		return fmt.Sprintf("%q", v)
+	case nil:
+		return "null"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func printKeyValue(indent string, k, v interface{}) {
+	fmt.Fprintf(os.Stdout, "%s%v: %s\n", indent, k, formatValue(v))
+}
 
 func checkCoseSign1(inputFilename string, chainFilename string, didString string, verbose bool) (*cosesign1.UnpackedCoseSign1, error) {
 	coseBlob, err := os.ReadFile(inputFilename)
@@ -32,6 +64,8 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		return nil, err
 	}
 
+	receipts := make([][]byte, 0)
+
 	fmt.Fprint(os.Stdout, "checkCoseSign1 passed\n")
 	if verbose {
 		fmt.Fprintf(os.Stdout, "iss: %s\n", unpacked.Issuer)
@@ -39,7 +73,49 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		fmt.Fprintf(os.Stdout, "cty: %s\n", unpacked.ContentType)
 		fmt.Fprintf(os.Stdout, "pubkey: %s\n", unpacked.Pubkey)
 		fmt.Fprintf(os.Stdout, "pubcert: %s\n", unpacked.Pubcert)
-		fmt.Fprintf(os.Stdout, "payload:\n%s\n", string(unpacked.Payload[:]))
+		fmt.Fprintf(os.Stdout, "all protected headers:\n")
+		isHashEnvelop := false
+		for k, v := range unpacked.Protected {
+			if k, ok := k.(int64); ok && (k == 33 || k == 34) {
+				fmt.Fprintf(os.Stdout, "  %d: ...\n", k)
+				continue
+			}
+			if k, ok := k.(int64); ok && k == 259 {
+				// preimage-content-type
+				isHashEnvelop = true
+			}
+			printKeyValue("  ", k, v)
+		}
+		fmt.Fprintf(os.Stdout, "all unprotected headers:\n")
+	a:
+		for k, v := range unpacked.Unprotected {
+			if k, ok := k.(int64); ok && k == 394 {
+				fmt.Fprintf(os.Stdout, "  394: ...")
+				receiptsArr, ok := v.([]interface{})
+				if !ok {
+					fmt.Fprintf(os.Stdout, " (failed to parse receipts)\n")
+					continue
+				}
+				for i, receipt := range receiptsArr {
+					receiptBytes, ok := receipt.([]byte)
+					if !ok {
+						fmt.Fprintf(os.Stdout, "  receipt %d failed to parse\n", i)
+						continue a
+					}
+					receipts = append(receipts, receiptBytes)
+				}
+				fmt.Fprintf(os.Stdout, "\n")
+				continue
+			}
+			printKeyValue("  ", k, v)
+		}
+		fmt.Fprintf(os.Stdout, "payload:\n")
+		if isHashEnvelop {
+			fmt.Fprintf(os.Stdout, "%x", unpacked.Payload[:])
+		} else {
+			fmt.Fprintf(os.Stdout, "%s", string(unpacked.Payload))
+		}
+		fmt.Fprintf(os.Stdout, "\n")
 	}
 	if len(didString) > 0 {
 		if len(chainPEMString) == 0 {
@@ -53,6 +129,50 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 			fmt.Fprintf(os.Stdout, "DID resolvers failed: err: %s\n", err.Error())
 		}
 	}
+
+	for i, receipt := range receipts {
+		var msg cose.Sign1Message
+		err := msg.UnmarshalCBOR(receipt)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(os.Stdout, "receipt %d:\n", i)
+		fmt.Fprintf(os.Stdout, "  protected headers:\n")
+		for k, v := range msg.Headers.Protected {
+			if k, ok := k.(int64); ok && k == 4 {
+				fmt.Fprintf(os.Stdout, "    4: %q\n", v.([]byte))
+				continue
+			}
+			printKeyValue("    ", k, v)
+		}
+		fmt.Fprintf(os.Stdout, "  unprotected headers:\n")
+		for k, v := range msg.Headers.Unprotected {
+			if k, ok := k.(int64); ok && k == 396 {
+				m, ok := v.(map[interface{}]interface{})
+				if !ok {
+					fmt.Fprintf(os.Stdout, "    396: ... (failed to parse)\n")
+					continue
+				}
+				fmt.Fprintf(os.Stdout, "    396:\n")
+				for k, v := range m {
+					if k, ok := k.(int64); ok && k == -1 {
+						fmt.Fprintf(os.Stdout, "      -1: inclusion proof\n")
+						continue
+					}
+					if k, ok := k.(int64); ok && k == -2 {
+						fmt.Fprintf(os.Stdout, "      -2: consistency proof\n")
+						continue
+					}
+					printKeyValue("      ", k, v)
+				}
+				continue
+			}
+			printKeyValue("    ", k, v)
+		}
+		fmt.Fprintf(os.Stdout, "  payload: %q\n", msg.Payload)
+		continue
+	}
+
 	return unpacked, err
 }
 
