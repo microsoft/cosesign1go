@@ -179,16 +179,15 @@ func UnpackAndValidateCOSE1CertChain(raw []byte) (*UnpackedCoseSign1, error) {
 		return nil, err
 	}
 
-	// cwt, hasCwt := protected[cose.HeaderLabelCWT]
-	cwt, hasCwt := protected[int64(15)]
+	cwt, hasCwt := protected[COSE_Header_CWTClaims]
 	var issuer, feed string
 	if hasCwt {
 		cwt, ok := cwt.(map[interface{}]interface{})
 		if !ok {
 			return nil, fmt.Errorf("wrong cwt data type")
 		}
-		issuer = getStringValue(cwt, int64(1))
-		feed = getStringValue(cwt, int64(2))
+		issuer = getStringValue(cwt, CWT_Issuer)
+		feed = getStringValue(cwt, CWT_Subject)
 	} else {
 		issuer = getStringValue(protected, "iss")
 		feed = getStringValue(protected, "feed")

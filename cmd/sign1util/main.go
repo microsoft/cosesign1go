@@ -76,12 +76,11 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		fmt.Fprintf(os.Stdout, "all protected headers:\n")
 		isHashEnvelop := false
 		for k, v := range unpacked.Protected {
-			if k, ok := k.(int64); ok && (k == 33 || k == 34) {
+			if k, ok := k.(int64); ok && (k == cosesign1.COSE_Header_x5chain || k == cosesign1.COSE_Header_x5t) {
 				fmt.Fprintf(os.Stdout, "  %d: ...\n", k)
 				continue
 			}
-			if k, ok := k.(int64); ok && k == 259 {
-				// preimage-content-type
+			if k, ok := k.(int64); ok && k == cosesign1.COSE_Header_PreimageContentType {
 				isHashEnvelop = true
 			}
 			printKeyValue("  ", k, v)
@@ -89,8 +88,8 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		fmt.Fprintf(os.Stdout, "all unprotected headers:\n")
 	a:
 		for k, v := range unpacked.Unprotected {
-			if k, ok := k.(int64); ok && k == 394 {
-				fmt.Fprintf(os.Stdout, "  394: ...")
+			if k, ok := k.(int64); ok && k == cosesign1.COSE_Header_Receipts {
+				fmt.Fprintf(os.Stdout, "  %d: ...", k)
 				receiptsArr, ok := v.([]interface{})
 				if !ok {
 					fmt.Fprintf(os.Stdout, " (failed to parse receipts)\n")
@@ -139,28 +138,28 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		fmt.Fprintf(os.Stdout, "receipt %d:\n", i)
 		fmt.Fprintf(os.Stdout, "  protected headers:\n")
 		for k, v := range msg.Headers.Protected {
-			if k, ok := k.(int64); ok && k == 4 {
-				fmt.Fprintf(os.Stdout, "    4: %q\n", v.([]byte))
+			if k, ok := k.(int64); ok && k == cosesign1.COSE_Header_kid {
+				fmt.Fprintf(os.Stdout, "    %d: %q\n", k, v.([]byte))
 				continue
 			}
 			printKeyValue("    ", k, v)
 		}
 		fmt.Fprintf(os.Stdout, "  unprotected headers:\n")
 		for k, v := range msg.Headers.Unprotected {
-			if k, ok := k.(int64); ok && k == 396 {
+			if k, ok := k.(int64); ok && k == cosesign1.COSE_Header_vdp {
 				m, ok := v.(map[interface{}]interface{})
 				if !ok {
-					fmt.Fprintf(os.Stdout, "    396: ... (failed to parse)\n")
+					fmt.Fprintf(os.Stdout, "    %d: ... (failed to parse)\n", k)
 					continue
 				}
-				fmt.Fprintf(os.Stdout, "    396:\n")
+				fmt.Fprintf(os.Stdout, "    %d:\n", k)
 				for k, v := range m {
-					if k, ok := k.(int64); ok && k == -1 {
-						fmt.Fprintf(os.Stdout, "      -1: inclusion proof\n")
+					if k, ok := k.(int64); ok && k == cosesign1.COSE_ProofInclusion {
+						fmt.Fprintf(os.Stdout, "      %d: inclusion proof\n", k)
 						continue
 					}
-					if k, ok := k.(int64); ok && k == -2 {
-						fmt.Fprintf(os.Stdout, "      -2: consistency proof\n")
+					if k, ok := k.(int64); ok && k == cosesign1.COSE_ProofConsistency {
+						fmt.Fprintf(os.Stdout, "      %d: consistency proof\n", k)
 						continue
 					}
 					printKeyValue("      ", k, v)
