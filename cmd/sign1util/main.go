@@ -1,7 +1,16 @@
 package main
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/tls"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
+	"math/big"
+	"net/http"
 	"os"
 	"strings"
 
@@ -10,6 +19,119 @@ import (
 	"github.com/urfave/cli"
 	"github.com/veraison/go-cose"
 )
+
+// jwk is a minimal JSON Web Key representation used to parse CCF transparency
+// service /jwks responses.
+type jwk struct {
+	Kty string `json:"kty"`
+	Crv string `json:"crv"`
+	Kid string `json:"kid"`
+	X   string `json:"x"`
+	Y   string `json:"y"`
+}
+
+type jwkSet struct {
+	Keys []jwk `json:"keys"`
+}
+
+func jwkToPublicKey(k jwk) (crypto.PublicKey, error) {
+	if k.Kty != "EC" {
+		return nil, fmt.Errorf("unsupported kty %q", k.Kty)
+	}
+	var curve elliptic.Curve
+	switch k.Crv {
+	case "P-256":
+		curve = elliptic.P256()
+	case "P-384":
+		curve = elliptic.P384()
+	case "P-521":
+		curve = elliptic.P521()
+	default:
+		return nil, fmt.Errorf("unsupported curve %q", k.Crv)
+	}
+	xBytes, err := base64.RawURLEncoding.DecodeString(k.X)
+	if err != nil {
+		return nil, fmt.Errorf("decoding x: %w", err)
+	}
+	yBytes, err := base64.RawURLEncoding.DecodeString(k.Y)
+	if err != nil {
+		return nil, fmt.Errorf("decoding y: %w", err)
+	}
+	return &ecdsa.PublicKey{
+		Curve: curve,
+		X:     new(big.Int).SetBytes(xBytes),
+		Y:     new(big.Int).SetBytes(yBytes),
+	}, nil
+}
+
+// fetchIssuerJWKS GETs https://<issuer>/jwks and returns the keys keyed by
+// their `kid`.
+//
+// CCF nodes serve TLS using a self-signed certificate whose authenticity is
+// backed by SNP attestation rather than a public CA, so TLS verification is
+// skipped here. A production verifier should validate the node's attestation
+// evidence instead.
+func fetchIssuerJWKS(issuer string) (map[string]crypto.PublicKey, error) {
+	url := "https://" + issuer + "/jwks"
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // CCF uses self-signed certs
+		},
+	}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", url, err)
+	}
+	var set jwkSet
+	if err := json.Unmarshal(body, &set); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", url, err)
+	}
+	out := make(map[string]crypto.PublicKey, len(set.Keys))
+	for i, k := range set.Keys {
+		pub, err := jwkToPublicKey(k)
+		if err != nil {
+			return nil, fmt.Errorf("key %d (kid=%s): %w", i, k.Kid, err)
+		}
+		out[k.Kid] = pub
+	}
+	return out, nil
+}
+
+// fetchCCFReceiptKeys looks up each receipt's issuer in the envelope, fetches
+// the matching JWKS, and returns a kid->PublicKey map covering all receipts.
+func fetchCCFReceiptKeys(unpacked *cosesign1.UnpackedCoseSign1) (map[string]crypto.PublicKey, error) {
+	infos, err := cosesign1.CCFReceiptsInfo(unpacked)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	keys := map[string]crypto.PublicKey{}
+	for _, info := range infos {
+		if info.Issuer == "" {
+			return nil, fmt.Errorf("receipt has no issuer; cannot fetch JWKS")
+		}
+		if seen[info.Issuer] {
+			continue
+		}
+		seen[info.Issuer] = true
+		issuerKeys, err := fetchIssuerJWKS(info.Issuer)
+		if err != nil {
+			return nil, err
+		}
+		for kid, k := range issuerKeys {
+			keys[kid] = k
+		}
+	}
+	return keys, nil
+}
 
 // formatValue formats a CBOR-decoded value in a human-readable way that
 // preserves integer keys (unlike JSON).
@@ -67,6 +189,21 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 	receipts := make([][]byte, 0)
 
 	fmt.Fprint(os.Stdout, "checkCoseSign1 passed\n")
+
+	// If the envelope carries COSE Receipts, validate them against the CCF
+	// ledger profile.
+	if _, hasReceipts := unpacked.Unprotected[cosesign1.COSE_Header_Receipts]; hasReceipts {
+		keys, err := fetchCCFReceiptKeys(unpacked)
+		if err != nil {
+			fmt.Fprintf(os.Stdout, "fetching CCF receipt keys failed - %s\n", err)
+			return nil, fmt.Errorf("fetching CCF receipt keys: %w", err)
+		}
+		if err := cosesign1.ValidateCCFReceipt(unpacked, keys); err != nil {
+			fmt.Fprintf(os.Stdout, "CCF receipt validation failed - %s\n", err)
+			return nil, fmt.Errorf("CCF receipt validation failed: %w", err)
+		}
+		fmt.Fprint(os.Stdout, "CCF receipt validation passed\n")
+	}
 	if verbose {
 		fmt.Fprintf(os.Stdout, "iss: %s\n", unpacked.Issuer)
 		fmt.Fprintf(os.Stdout, "feed: %s\n", unpacked.Feed)

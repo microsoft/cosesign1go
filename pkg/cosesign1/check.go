@@ -1,11 +1,14 @@
 package cosesign1
 
 import (
+	"crypto"
+	"crypto/sha256"
 	"crypto/x509"
 	"fmt"
 
 	didx509resolver "github.com/Microsoft/didx509go/pkg/did-x509-resolver"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/sirupsen/logrus"
 
 	"github.com/veraison/go-cose"
@@ -207,4 +210,311 @@ func UnpackAndValidateCOSE1CertChain(raw []byte) (*UnpackedCoseSign1, error) {
 		Protected:   protected,
 		Unprotected: msg.Headers.Unprotected,
 	}, nil
+}
+
+// asInt64 coerces a CBOR-decoded integer value (which may be returned as
+// int64, uint64 or int by different decoders) to an int64.
+func asInt64(v interface{}) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case uint64:
+		return int64(n), true
+	case uint:
+		return int64(n), true
+	}
+	return 0, false
+}
+
+// CCFReceiptInfo summarises the information needed by a caller to look up
+// the public key used to sign a CCF receipt (e.g. by fetching the issuer's
+// JWKS) before calling ValidateCCFReceipt.
+type CCFReceiptInfo struct {
+	// Issuer is the value of CWT claim `iss` (1) from the receipt's
+	// protected CWT Claims header (label 15), if present.
+	Issuer string
+	// Kid is the value of the receipt's protected `kid` header (label 4),
+	// interpreted as a string (CCF transparency services use ASCII hex), if
+	// present.
+	Kid string
+}
+
+// CCFReceiptsInfo returns one CCFReceiptInfo per receipt attached to the
+// envelope, in receipt order. It does not validate the receipts.
+func CCFReceiptsInfo(unpacked *UnpackedCoseSign1) ([]CCFReceiptInfo, error) {
+	if unpacked == nil {
+		return nil, fmt.Errorf("nil UnpackedCoseSign1")
+	}
+	rcptsVal, ok := unpacked.Unprotected[COSE_Header_Receipts]
+	if !ok {
+		return nil, nil
+	}
+	rcptsArr, ok := rcptsVal.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("receipts header is not an array (got %T)", rcptsVal)
+	}
+	out := make([]CCFReceiptInfo, 0, len(rcptsArr))
+	for i, r := range rcptsArr {
+		rb, ok := r.([]byte)
+		if !ok {
+			return nil, fmt.Errorf("receipt %d is not a byte string (got %T)", i, r)
+		}
+		var msg cose.Sign1Message
+		if err := msg.UnmarshalCBOR(rb); err != nil {
+			return nil, fmt.Errorf("receipt %d: parsing COSE_Sign1: %w", i, err)
+		}
+		info := CCFReceiptInfo{}
+		if kidVal, ok := msg.Headers.Protected[COSE_Header_kid]; ok {
+			if kidBytes, ok := kidVal.([]byte); ok {
+				info.Kid = string(kidBytes)
+			}
+		}
+		if cwtVal, ok := msg.Headers.Protected[COSE_Header_CWTClaims]; ok {
+			if cwt, ok := cwtVal.(map[interface{}]interface{}); ok {
+				if iss, ok := cwt[CWT_Issuer].(string); ok {
+					info.Issuer = iss
+				}
+			}
+		}
+		out = append(out, info)
+	}
+	return out, nil
+}
+
+// ValidateCCFReceipt validates the COSE Receipts attached as the unprotected
+// `receipts` header (label 394) of an already-validated COSE Sign1 envelope,
+// using the CCF ledger profile from
+// https://www.ietf.org/archive/id/draft-birkholz-cose-receipts-ccf-profile-05.html.
+//
+// For each receipt it checks that:
+//   - the receipt parses as a COSE_Sign1,
+//   - its protected `vds` header (label 395) equals
+//     COSE_vds_CCF_LEDGER_SHA256,
+//   - its payload is detached,
+//   - its unprotected `vdp` header (label 396) contains at least one
+//     inclusion proof (key -1) that decodes into a well-formed CCF inclusion
+//     proof,
+//   - the Merkle root recomputed from the inclusion proof verifies the
+//     receipt's COSE_Sign1 signature, using the public key in `keys` indexed
+//     by the receipt's protected `kid` header (label 4) interpreted as a
+//     string.
+func ValidateCCFReceipt(unpacked *UnpackedCoseSign1, keys map[string]crypto.PublicKey) error {
+	if unpacked == nil {
+		return fmt.Errorf("nil UnpackedCoseSign1")
+	}
+	rcptsVal, ok := unpacked.Unprotected[COSE_Header_Receipts]
+	if !ok {
+		return fmt.Errorf("no receipts (label %d) in unprotected header", COSE_Header_Receipts)
+	}
+	rcptsArr, ok := rcptsVal.([]interface{})
+	if !ok {
+		return fmt.Errorf("receipts header is not an array (got %T)", rcptsVal)
+	}
+	if len(rcptsArr) == 0 {
+		return fmt.Errorf("receipts array is empty")
+	}
+	for i, r := range rcptsArr {
+		rb, ok := r.([]byte)
+		if !ok {
+			return fmt.Errorf("receipt %d is not a byte string (got %T)", i, r)
+		}
+		if err := validateCCFReceipt(rb, keys); err != nil {
+			return fmt.Errorf("receipt %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func validateCCFReceipt(raw []byte, keys map[string]crypto.PublicKey) error {
+	var msg cose.Sign1Message
+	if err := msg.UnmarshalCBOR(raw); err != nil {
+		return fmt.Errorf("parsing receipt COSE_Sign1: %w", err)
+	}
+
+	vdsVal, ok := msg.Headers.Protected[COSE_Header_vds]
+	if !ok {
+		return fmt.Errorf("missing vds (label %d) in protected header", COSE_Header_vds)
+	}
+	vds, ok := asInt64(vdsVal)
+	if !ok {
+		return fmt.Errorf("vds has wrong type: %T", vdsVal)
+	}
+	if vds != COSE_vds_CCF_LEDGER_SHA256 {
+		return fmt.Errorf("vds is %d, expected CCF_LEDGER_SHA256 (%d)", vds, COSE_vds_CCF_LEDGER_SHA256)
+	}
+
+	if msg.Payload != nil {
+		return fmt.Errorf("payload must be detached but has %d bytes", len(msg.Payload))
+	}
+
+	algoVal, ok := msg.Headers.Protected[cose.HeaderLabelAlgorithm]
+	if !ok {
+		return fmt.Errorf("missing algorithm in protected header")
+	}
+	algo, ok := algoVal.(cose.Algorithm)
+	if !ok {
+		return fmt.Errorf("algorithm has wrong type: %T", algoVal)
+	}
+
+	kidVal, ok := msg.Headers.Protected[COSE_Header_kid]
+	if !ok {
+		return fmt.Errorf("missing kid (label %d) in protected header", COSE_Header_kid)
+	}
+	kidBytes, ok := kidVal.([]byte)
+	if !ok {
+		return fmt.Errorf("kid has wrong type: %T", kidVal)
+	}
+	kid := string(kidBytes)
+	pubKey, ok := keys[kid]
+	if !ok {
+		return fmt.Errorf("no key for kid %s", kid)
+	}
+
+	vdpVal, ok := msg.Headers.Unprotected[COSE_Header_vdp]
+	if !ok {
+		return fmt.Errorf("missing vdp (label %d) in unprotected header", COSE_Header_vdp)
+	}
+	vdpMap, ok := vdpVal.(map[interface{}]interface{})
+	if !ok {
+		return fmt.Errorf("vdp has wrong type: %T", vdpVal)
+	}
+	inclVal, ok := vdpMap[COSE_ProofInclusion]
+	if !ok {
+		return fmt.Errorf("no inclusion proofs (key %d) in vdp", COSE_ProofInclusion)
+	}
+	inclArr, ok := inclVal.([]interface{})
+	if !ok {
+		return fmt.Errorf("inclusion proofs has wrong type: %T", inclVal)
+	}
+	if len(inclArr) == 0 {
+		return fmt.Errorf("inclusion proofs array is empty")
+	}
+
+	verifier, err := cose.NewVerifier(algo, pubKey)
+	if err != nil {
+		return fmt.Errorf("cose.NewVerifier (algo %d): %w", algo, err)
+	}
+
+	for i, p := range inclArr {
+		pb, ok := p.([]byte)
+		if !ok {
+			return fmt.Errorf("inclusion proof %d is not a byte string (got %T)", i, p)
+		}
+		root, err := computeCCFRoot(pb)
+		if err != nil {
+			return fmt.Errorf("inclusion proof %d: %w", i, err)
+		}
+		logrus.Debugf("CCF receipt inclusion proof %d recomputed root: %x", i, root)
+		// Verify the receipt's COSE_Sign1 signature using the recomputed
+		// Merkle root as the detached payload.
+		msg.Payload = root
+		if err := msg.Verify(nil, verifier); err != nil {
+			return fmt.Errorf("inclusion proof %d: signature verification failed (recomputed root=%x, kid=%s, alg=%d): %w", i, root, kid, algo, err)
+		}
+		msg.Payload = nil
+	}
+	return nil
+}
+
+// computeCCFRoot decodes a CCF inclusion proof (the bstr-wrapped CBOR
+// `ccf-inclusion-proof` structure) and recomputes the Merkle root using the
+// algorithm described in section 3.2 of
+// draft-birkholz-cose-receipts-ccf-profile-05.
+func computeCCFRoot(proofBytes []byte) ([]byte, error) {
+	var proof map[int64]interface{}
+	if err := cbor.Unmarshal(proofBytes, &proof); err != nil {
+		return nil, fmt.Errorf("decoding inclusion proof: %w", err)
+	}
+	leafVal, ok := proof[1]
+	if !ok {
+		return nil, fmt.Errorf("missing leaf (key 1)")
+	}
+	pathVal, ok := proof[2]
+	if !ok {
+		return nil, fmt.Errorf("missing path (key 2)")
+	}
+
+	leafArr, ok := leafVal.([]interface{})
+	if !ok || len(leafArr) != 3 {
+		return nil, fmt.Errorf("leaf must be a 3-element array, got %T len %d", leafVal, lenOf(leafVal))
+	}
+	internalTxHash, ok := leafArr[0].([]byte)
+	if !ok || len(internalTxHash) != 32 {
+		return nil, fmt.Errorf("leaf.internal-transaction-hash must be a 32-byte string, got %T", leafArr[0])
+	}
+	var internalEvidence []byte
+	switch v := leafArr[1].(type) {
+	case string:
+		internalEvidence = []byte(v)
+	case []byte:
+		internalEvidence = v
+	default:
+		return nil, fmt.Errorf("leaf.internal-evidence must be text or byte string, got %T", leafArr[1])
+	}
+	if len(internalEvidence) < 1 || len(internalEvidence) > 1024 {
+		return nil, fmt.Errorf("leaf.internal-evidence has invalid length %d", len(internalEvidence))
+	}
+	dataHash, ok := leafArr[2].([]byte)
+	if !ok || len(dataHash) != 32 {
+		return nil, fmt.Errorf("leaf.data-hash must be a 32-byte string, got %T", leafArr[2])
+	}
+
+	// Leaf hash:
+	//   h := HASH(internal-transaction-hash || HASH(internal-evidence) || data-hash)
+	//
+	// Note: the current text of draft-birkholz-cose-receipts-ccf-profile-05
+	// describes h as the un-hashed 96-byte concatenation, but the deployed
+	// CCF implementations (and pyscitt) hash the concatenation to form a
+	// 32-byte leaf before applying the inclusion path.
+	evidenceHash := sha256.Sum256(internalEvidence)
+	leafConcat := make([]byte, 0, 32+32+32)
+	leafConcat = append(leafConcat, internalTxHash...)
+	leafConcat = append(leafConcat, evidenceHash[:]...)
+	leafConcat = append(leafConcat, dataHash...)
+	leafHash := sha256.Sum256(leafConcat)
+	h := leafHash[:]
+	logrus.Debugf("CCF leaf: internal-tx-hash=%x evidence=%q (hash=%x) data-hash=%x -> leaf=%x", internalTxHash, internalEvidence, evidenceHash[:], dataHash, h)
+
+	pathArr, ok := pathVal.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("path must be an array")
+	}
+	if len(pathArr) == 0 {
+		return nil, fmt.Errorf("path must contain at least one element")
+	}
+	for i, el := range pathArr {
+		elArr, ok := el.([]interface{})
+		if !ok || len(elArr) != 2 {
+			return nil, fmt.Errorf("path element %d must be a 2-element array", i)
+		}
+		left, ok := elArr[0].(bool)
+		if !ok {
+			return nil, fmt.Errorf("path element %d left flag must be a bool", i)
+		}
+		hash, ok := elArr[1].([]byte)
+		if !ok || len(hash) != 32 {
+			return nil, fmt.Errorf("path element %d hash must be a 32-byte string", i)
+		}
+		var concat []byte
+		if left {
+			concat = append(concat, hash...)
+			concat = append(concat, h...)
+		} else {
+			concat = append(concat, h...)
+			concat = append(concat, hash...)
+		}
+		sum := sha256.Sum256(concat)
+		h = sum[:]
+		logrus.Debugf("CCF path step %d: left=%v sibling=%x -> h=%x", i, left, hash, h)
+	}
+	return h, nil
+}
+
+func lenOf(v interface{}) int {
+	if a, ok := v.([]interface{}); ok {
+		return len(a)
+	}
+	return -1
 }
