@@ -100,6 +100,14 @@ func fetchIssuerJWKS(issuer string) (map[string]crypto.PublicKey, error) {
 		if err != nil {
 			return nil, fmt.Errorf("key %d (kid=%s): %w", i, k.Kid, err)
 		}
+		if existingKey, exists := out[k.Kid]; exists {
+			// Equal is implemented for all crypto.PublicKey types in std
+			eq, ok := existingKey.(interface{ Equal(crypto.PublicKey) bool })
+			if !ok || !eq.Equal(pub) {
+				return nil, fmt.Errorf("conflicting kid %s seen in JWKS from %s", k.Kid, url)
+			}
+			continue
+		}
 		out[k.Kid] = pub
 	}
 	return out, nil
@@ -123,6 +131,9 @@ func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt) (map[string]cry
 			return nil, err
 		}
 		for kid, k := range issuerKeys {
+			if _, exists := keys[kid]; exists {
+				return nil, fmt.Errorf("Issuer %s JWKS contains kid %s which is already present from another issuer", r.Issuer, kid)
+			}
 			keys[kid] = k
 		}
 	}
@@ -208,14 +219,14 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		fmt.Fprintf(os.Stdout, "pubkey: %s\n", unpacked.Pubkey)
 		fmt.Fprintf(os.Stdout, "pubcert: %s\n", unpacked.Pubcert)
 		fmt.Fprintf(os.Stdout, "all protected headers:\n")
-		isHashEnvelop := false
+		isHashEnvelope := false
 		for k, v := range unpacked.Protected {
 			if k, ok := k.(int64); ok && (k == cosesign1.COSE_Header_x5chain || k == cosesign1.COSE_Header_x5t) {
 				fmt.Fprintf(os.Stdout, "  %d: ...\n", k)
 				continue
 			}
 			if k, ok := k.(int64); ok && k == cosesign1.COSE_Header_PreimageContentType {
-				isHashEnvelop = true
+				isHashEnvelope = true
 			}
 			printKeyValue("  ", k, v)
 		}
@@ -228,7 +239,7 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 			printKeyValue("  ", k, v)
 		}
 		fmt.Fprintf(os.Stdout, "payload:\n")
-		if isHashEnvelop {
+		if isHashEnvelope {
 			fmt.Fprintf(os.Stdout, "%x", unpacked.Payload[:])
 		} else {
 			fmt.Fprintf(os.Stdout, "%s", string(unpacked.Payload))
@@ -257,7 +268,14 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		fmt.Fprintf(os.Stdout, "  protected headers:\n")
 		for k, v := range msg.Headers.Protected {
 			if k, ok := k.(int64); ok && k == cosesign1.COSE_Header_kid {
-				fmt.Fprintf(os.Stdout, "    %d: %q\n", k, v.([]byte))
+				switch v := v.(type) {
+				case []byte:
+					fmt.Fprintf(os.Stdout, "    %d: %q\n", k, v)
+				case string:
+					fmt.Fprintf(os.Stdout, "    %d: string(%q) (invalid type for kid)\n", k, v)
+				default:
+					fmt.Fprintf(os.Stdout, "    %d: ... (invalid type for kid)\n", k)
+				}
 				continue
 			}
 			printKeyValue("    ", k, v)
@@ -267,7 +285,7 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 			if k, ok := k.(int64); ok && k == cosesign1.COSE_Header_vdp {
 				m, ok := v.(map[interface{}]interface{})
 				if !ok {
-					fmt.Fprintf(os.Stdout, "    %d: ... (failed to parse)\n", k)
+					fmt.Fprintf(os.Stdout, "    %d: ... (invalid type for vdp)\n", k)
 					continue
 				}
 				fmt.Fprintf(os.Stdout, "    %d:\n", k)

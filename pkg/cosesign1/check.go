@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"fmt"
+	"math"
 
 	didx509resolver "github.com/Microsoft/didx509go/pkg/did-x509-resolver"
 
@@ -248,7 +249,7 @@ func UnpackAndValidateCOSE1CertChain(raw []byte) (*UnpackedCoseSign1, error) {
 	if hasCwt {
 		cwt, ok := cwt.(map[interface{}]interface{})
 		if !ok {
-			return nil, fmt.Errorf("wrong cwt data type")
+			return nil, fmt.Errorf("expected CWTClaims header to be a map[any]any, got %T", cwt)
 		}
 		issuer = getStringValue(cwt, CWT_Issuer)
 		feed = getStringValue(cwt, CWT_Subject)
@@ -288,6 +289,10 @@ func asInt64(v interface{}) (int64, bool) {
 	case int:
 		return int64(n), true
 	case uint64:
+		if n > math.MaxInt64 {
+			logrus.Errorf("Unable to convert %v to int64 due to overflow", n)
+			return 0, false
+		}
 		return int64(n), true
 	case uint:
 		return int64(n), true
