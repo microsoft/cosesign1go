@@ -18,7 +18,6 @@ import (
 	didx509resolver "github.com/Microsoft/didx509go/pkg/did-x509-resolver"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
-	"github.com/veraison/go-cose"
 )
 
 // jwk is a minimal JSON Web Key representation used to parse CCF transparency
@@ -106,24 +105,20 @@ func fetchIssuerJWKS(issuer string) (map[string]crypto.PublicKey, error) {
 	return out, nil
 }
 
-// fetchCCFReceiptKeys looks up each receipt's issuer in the envelope, fetches
-// the matching JWKS, and returns a kid->PublicKey map covering all receipts.
-func fetchCCFReceiptKeys(unpacked *cosesign1.UnpackedCoseSign1) (map[string]crypto.PublicKey, error) {
-	infos, err := cosesign1.CCFReceiptsInfo(unpacked)
-	if err != nil {
-		return nil, err
-	}
+// fetchCCFReceiptKeys returns a kid->PublicKey map by fetching the JWKS for
+// each unique receipt issuer.
+func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt) (map[string]crypto.PublicKey, error) {
 	seen := map[string]bool{}
 	keys := map[string]crypto.PublicKey{}
-	for _, info := range infos {
-		if info.Issuer == "" {
+	for _, r := range receipts {
+		if r.Issuer == "" {
 			return nil, fmt.Errorf("receipt has no issuer; cannot fetch JWKS")
 		}
-		if seen[info.Issuer] {
+		if seen[r.Issuer] {
 			continue
 		}
-		seen[info.Issuer] = true
-		issuerKeys, err := fetchIssuerJWKS(info.Issuer)
+		seen[r.Issuer] = true
+		issuerKeys, err := fetchIssuerJWKS(r.Issuer)
 		if err != nil {
 			return nil, err
 		}
@@ -187,23 +182,24 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		return nil, err
 	}
 
-	receipts := make([][]byte, 0)
-
 	fmt.Fprint(os.Stdout, "checkCoseSign1 passed\n")
 
-	// If the envelope carries COSE Receipts, validate them against the CCF
+	// If the envelope carries COSE Receipts, validate each against the CCF
 	// ledger profile.
-	if _, hasReceipts := unpacked.Unprotected[cosesign1.COSE_Header_Receipts]; hasReceipts {
-		keys, err := fetchCCFReceiptKeys(unpacked)
+	var receiptKeys map[string]crypto.PublicKey
+	if len(unpacked.Receipts) > 0 {
+		receiptKeys, err = fetchCCFReceiptKeys(unpacked.Receipts)
 		if err != nil {
 			fmt.Fprintf(os.Stdout, "fetching CCF receipt keys failed - %s\n", err)
 			return nil, fmt.Errorf("fetching CCF receipt keys: %w", err)
 		}
-		if err := cosesign1.ValidateCCFReceipt(unpacked, keys); err != nil {
-			fmt.Fprintf(os.Stdout, "CCF receipt validation failed - %s\n", err)
-			return nil, fmt.Errorf("CCF receipt validation failed: %w", err)
+		for i, r := range unpacked.Receipts {
+			if err := r.Validate(receiptKeys); err != nil {
+				fmt.Fprintf(os.Stdout, "CCF receipt %d from %s validation failed - %s\n", i, r.Issuer, err)
+				return nil, fmt.Errorf("CCF receipt %d from %s validation failed: %w", i, r.Issuer, err)
+			}
+			fmt.Fprintf(os.Stdout, "CCF receipt %d from %s validation passed\n", i, r.Issuer)
 		}
-		fmt.Fprint(os.Stdout, "CCF receipt validation passed\n")
 	}
 	if verbose {
 		fmt.Fprintf(os.Stdout, "iss: %s\n", unpacked.Issuer)
@@ -224,24 +220,9 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 			printKeyValue("  ", k, v)
 		}
 		fmt.Fprintf(os.Stdout, "all unprotected headers:\n")
-	a:
 		for k, v := range unpacked.Unprotected {
 			if k, ok := k.(int64); ok && k == cosesign1.COSE_Header_Receipts {
-				fmt.Fprintf(os.Stdout, "  %d: ...", k)
-				receiptsArr, ok := v.([]interface{})
-				if !ok {
-					fmt.Fprintf(os.Stdout, " (failed to parse receipts)\n")
-					continue
-				}
-				for i, receipt := range receiptsArr {
-					receiptBytes, ok := receipt.([]byte)
-					if !ok {
-						fmt.Fprintf(os.Stdout, "  receipt %d failed to parse\n", i)
-						continue a
-					}
-					receipts = append(receipts, receiptBytes)
-				}
-				fmt.Fprintf(os.Stdout, "\n")
+				fmt.Fprintf(os.Stdout, "  %d: ...\n", k)
 				continue
 			}
 			printKeyValue("  ", k, v)
@@ -267,12 +248,11 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		}
 	}
 
-	for i, receipt := range receipts {
-		var msg cose.Sign1Message
-		err := msg.UnmarshalCBOR(receipt)
-		if err != nil {
-			return nil, err
+	for i, receipt := range unpacked.Receipts {
+		if !verbose {
+			continue
 		}
+		msg := receipt.Message
 		fmt.Fprintf(os.Stdout, "receipt %d:\n", i)
 		fmt.Fprintf(os.Stdout, "  protected headers:\n")
 		for k, v := range msg.Headers.Protected {
@@ -307,7 +287,6 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 			printKeyValue("    ", k, v)
 		}
 		fmt.Fprintf(os.Stdout, "  payload: %q\n", msg.Payload)
-		continue
 	}
 
 	return unpacked, err
