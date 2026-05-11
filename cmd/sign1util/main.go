@@ -16,6 +16,7 @@ import (
 
 	"github.com/Microsoft/cosesign1go/pkg/cosesign1"
 	didx509resolver "github.com/Microsoft/didx509go/pkg/did-x509-resolver"
+	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"github.com/veraison/go-cose"
 )
@@ -623,6 +624,22 @@ var chainCmd = cli.Command{
 func main() {
 	app := cli.NewApp()
 	app.Name = "sign1util"
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:   "log-level",
+			Usage:  "logrus log level [trace|debug|info|warn|error]",
+			EnvVar: "LOG_LEVEL",
+			Value:  "info",
+		},
+	}
+	app.Before = func(ctx *cli.Context) error {
+		lvl, err := logrus.ParseLevel(ctx.GlobalString("log-level"))
+		if err != nil {
+			return fmt.Errorf("invalid --log-level: %w", err)
+		}
+		logrus.SetLevel(lvl)
+		return nil
+	}
 	app.Commands = []cli.Command{
 		createCmd,
 		checkCmd,
