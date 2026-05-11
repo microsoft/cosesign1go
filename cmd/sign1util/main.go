@@ -291,11 +291,11 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 				fmt.Fprintf(os.Stdout, "    %d:\n", k)
 				for k, v := range m {
 					if k, ok := k.(int64); ok && k == cosesign1.COSE_ProofInclusion {
-						fmt.Fprintf(os.Stdout, "      %d: inclusion proof\n", k)
+						fmt.Fprintf(os.Stdout, "      %d (inclusion): ...\n", k)
 						continue
 					}
 					if k, ok := k.(int64); ok && k == cosesign1.COSE_ProofConsistency {
-						fmt.Fprintf(os.Stdout, "      %d: consistency proof\n", k)
+						fmt.Fprintf(os.Stdout, "      %d (consistency): ...\n", k)
 						continue
 					}
 					printKeyValue("      ", k, v)
