@@ -12,6 +12,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"time"
 
 	"github.com/Microsoft/cosesign1go/pkg/cosesign1"
 )
@@ -87,6 +88,7 @@ func fetchIssuerJWKS(issuer string, verifyCert CertVerifier) (map[string]crypto.
 		Transport: &http.Transport{
 			TLSClientConfig: tlsConfig,
 		},
+		Timeout: 10 * time.Second,
 	}
 	resp, err := client.Get(url)
 	if err != nil {

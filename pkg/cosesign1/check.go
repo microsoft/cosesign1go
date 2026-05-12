@@ -295,6 +295,11 @@ func asInt64(v interface{}) (int64, bool) {
 		}
 		return int64(n), true
 	case uint:
+		// uint is 64bit on 64bit platforms, so can overflow int64
+		if n > math.MaxInt64 {
+			logrus.Errorf("Unable to convert %v to int64 due to overflow", n)
+			return 0, false
+		}
 		return int64(n), true
 	}
 	return 0, false

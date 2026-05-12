@@ -48,9 +48,9 @@ func printKeyValue(indent string, k, v interface{}) {
 
 // CCF nodes serve TLS using a self-signed certificate whose authenticity is
 // backed by attestation rather than a public CA. Since we have no way to
-// validate the CCF's attestation evidence here, we simply prints summary
-// details of a CCF node's TLS certificate and unconditionally accepts it, which
-// is acceptable for this tool.
+// validate the CCF's attestation evidence here, we simply print summary details
+// of a CCF node's TLS certificate and unconditionally accepts it, which is
+// acceptable for this tool.
 func acceptAndPrintCert(issuer string, cert *x509.Certificate) error {
 	fp := sha256.Sum256(cert.Raw)
 	fmt.Fprintf(os.Stdout, "%s: accepting TLS certificate subject=%q issuer=%q notAfter=%s sha256=%s\n",
