@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -59,18 +60,32 @@ func jwkToPublicKey(k jwk) (crypto.PublicKey, error) {
 	}, nil
 }
 
+// CertVerifier is invoked with the leaf certificate presented by a CCF node
+// during TLS handshake. Returning nil accepts the certificate; returning an
+// error aborts the connection.
+type CertVerifier func(issuer string, cert *x509.Certificate) error
+
 // fetchIssuerJWKS GETs https://<issuer>/jwks and returns the keys keyed by
-// their `kid`.
-//
-// CCF nodes serve TLS using a self-signed certificate whose authenticity is
-// backed by SNP attestation rather than a public CA, so TLS verification is
-// skipped here. A production verifier should validate the node's attestation
-// evidence instead.
-func fetchIssuerJWKS(issuer string) (map[string]crypto.PublicKey, error) {
+// their `kid`. If verifyCert is not nil, the leaf certificate presented by the
+// server is passed to verifyCert.
+func fetchIssuerJWKS(issuer string, verifyCert CertVerifier) (map[string]crypto.PublicKey, error) {
 	url := "https://" + issuer + "/jwks"
+	tlsConfig := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // CCF uses self-signed certs that are supposed to be validated via attestation, and so will never pass the normal verification.
+	if verifyCert != nil {
+		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return fmt.Errorf("server presented no certificate")
+			}
+			cert, err := x509.ParseCertificate(rawCerts[0])
+			if err != nil {
+				return fmt.Errorf("parsing server certificate: %w", err)
+			}
+			return verifyCert(issuer, cert)
+		}
+	}
 	client := &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // CCF uses self-signed certs
+			TLSClientConfig: tlsConfig,
 		},
 	}
 	resp, err := client.Get(url)
@@ -109,8 +124,9 @@ func fetchIssuerJWKS(issuer string) (map[string]crypto.PublicKey, error) {
 }
 
 // fetchCCFReceiptKeys returns a kid->PublicKey map by fetching the JWKS for
-// each unique receipt issuer.
-func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt) (map[string]crypto.PublicKey, error) {
+// each unique receipt issuer. If not nil, verifyCert is invoked with the leaf
+// certificate presented by each issuer.
+func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt, verifyCert CertVerifier) (map[string]crypto.PublicKey, error) {
 	seen := map[string]bool{}
 	keys := map[string]crypto.PublicKey{}
 	for _, r := range receipts {
@@ -121,7 +137,7 @@ func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt) (map[string]cry
 			continue
 		}
 		seen[r.Issuer] = true
-		issuerKeys, err := fetchIssuerJWKS(r.Issuer)
+		issuerKeys, err := fetchIssuerJWKS(r.Issuer, verifyCert)
 		if err != nil {
 			return nil, err
 		}

@@ -2,6 +2,9 @@ package main
 
 import (
 	"crypto"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -43,6 +46,18 @@ func printKeyValue(indent string, k, v interface{}) {
 	fmt.Fprintf(os.Stdout, "%s%v: %s\n", indent, k, formatValue(v))
 }
 
+// CCF nodes serve TLS using a self-signed certificate whose authenticity is
+// backed by attestation rather than a public CA. Since we have no way to
+// validate the CCF's attestation evidence here, we simply prints summary
+// details of a CCF node's TLS certificate and unconditionally accepts it, which
+// is acceptable for this tool.
+func acceptAndPrintCert(issuer string, cert *x509.Certificate) error {
+	fp := sha256.Sum256(cert.Raw)
+	fmt.Fprintf(os.Stdout, "%s: accepting TLS certificate subject=%q issuer=%q notAfter=%s sha256=%s\n",
+		issuer, cert.Subject, cert.Issuer, cert.NotAfter.Format("2006-01-02"), hex.EncodeToString(fp[:]))
+	return nil
+}
+
 func checkCoseSign1(inputFilename string, chainFilename string, didString string, verbose bool) (*cosesign1.UnpackedCoseSign1, error) {
 	coseBlob, err := os.ReadFile(inputFilename)
 	if err != nil {
@@ -71,7 +86,7 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 	// ledger profile.
 	var receiptKeys map[string]crypto.PublicKey
 	if len(unpacked.Receipts) > 0 {
-		receiptKeys, err = fetchCCFReceiptKeys(unpacked.Receipts)
+		receiptKeys, err = fetchCCFReceiptKeys(unpacked.Receipts, acceptAndPrintCert)
 		if err != nil {
 			fmt.Fprintf(os.Stdout, "fetching CCF receipt keys failed - %s\n", err)
 			return nil, fmt.Errorf("fetching CCF receipt keys: %w", err)
