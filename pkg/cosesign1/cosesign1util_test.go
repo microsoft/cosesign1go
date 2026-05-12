@@ -235,13 +235,15 @@ func loadJWKSFile(t *testing.T, filename string) map[string]crypto.PublicKey {
 
 const (
 	envelopeFile              = "esrp_transparent_hash_envelop.cose"
-	envelopeJWKSFile          = "esrp_ledger_pub_keys.json"
+	envelopeJWKSFile          = "esrp_db_ledger_pub_keys.json"
 	envelopeExpectedIssuer    = "did:x509:0:sha256:I__iuL25oXEVFdTP_aBLx_eT1RPHbCQ_ECBQfYZpt9s::eku:1.3.6.1.4.1.311.76.59.1.2"
 	envelopeExpectedFeed      = "ContainerPlat-AMD-UVM"
 	envelopeReceiptIssuer     = "esrp-cts-db.confidential-ledger.azure.com"
 	envelopeReceiptKid        = "da7694f16def5a056ca96afb21e89a9450e4cc875e2de351da76d99544a3e849"
 	envelopePreimageCType     = "application/octet-stream"
 	envelopeReceiptCWTSubject = "scitt.ccf.signature.v1"
+	graftedEnvelopeFile       = "esrp_with_grafted_receipt.cose"
+	graftedEnvelopeJWKSFile   = "esrp_cp_ledger_pub_keys.json"
 )
 
 // Test_UnpackTransparentHashEnvelope verifies that a CWT-based envelope's
@@ -370,5 +372,30 @@ func Test_ValidateTransparentReceiptMissingKey(t *testing.T) {
 	err = unpacked.Receipts[0].Validate(map[string]crypto.PublicKey{})
 	if err == nil {
 		t.Fatal("Validate with empty keys unexpectedly succeeded")
+	}
+}
+
+// Test_GraftedReceiptIsRejected loads esrp_with_grafted_receipt.cose, an envelope
+// constructed by attaching a receipt for a different (unrelated) signed
+// statement, and asserts that validation detects the mismatch. The receipt
+// itself is valid, only the matching is wrong.
+func Test_GraftedReceiptIsRejected(t *testing.T) {
+	raw, err := os.ReadFile(graftedEnvelopeFile)
+	if err != nil {
+		t.Fatalf("reading %s: %s", graftedEnvelopeFile, err)
+	}
+	unpacked, err := UnpackAndValidateCOSE1CertChain(raw)
+	if err != nil {
+		t.Fatalf("UnpackAndValidateCOSE1CertChain failed: %s", err)
+	}
+	if len(unpacked.Receipts) == 0 {
+		t.Fatalf("no receipts attached to envelope")
+	}
+	// Provide keys for the ledger that issued the donor receipt so that the
+	// receipt's own signature verifies; the only remaining defence is the
+	// missing binding check.
+	keys := loadJWKSFile(t, graftedEnvelopeJWKSFile)
+	if err := unpacked.Receipts[0].Validate(keys); err == nil {
+		t.Errorf("grafted receipt unexpectedly passed validation: envelope/receipt mismatch is not checked")
 	}
 }
