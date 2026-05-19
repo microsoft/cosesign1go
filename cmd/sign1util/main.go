@@ -41,6 +41,20 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		fmt.Fprintf(os.Stdout, "pubcert: %s\n", unpacked.Pubcert)
 		fmt.Fprintf(os.Stdout, "payload:\n%s\n", string(unpacked.Payload[:]))
 	}
+
+	// Validate DID parsed from the CoseSign1 document.
+	if len(chainPEMString) == 0 {
+		chainPEMString = unpacked.ChainPem
+	}
+	didDoc, err := didx509resolver.Resolve(chainPEMString, unpacked.Issuer, true)
+	if err == nil {
+		fmt.Fprintf(os.Stdout, "DID resolvers passed:\n%s\n", didDoc)
+	} else {
+		// all the error paths return an empty string, so we can just print the error
+		fmt.Fprintf(os.Stdout, "DID resolvers failed: err: %s\n", err.Error())
+	}
+
+	// Validate DID provided as a parameter if provided.
 	if len(didString) > 0 {
 		if len(chainPEMString) == 0 {
 			chainPEMString = unpacked.ChainPem
@@ -173,6 +187,7 @@ var checkCmd = cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
+
 		_, err := checkCoseSign1(
 			ctx.String("in"),
 			ctx.String("chain"),
