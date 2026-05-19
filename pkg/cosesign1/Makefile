@@ -24,9 +24,10 @@
 #
 
 
-# note test-fail is expected to fail
-
-AUTOPARSE_CHAIN:=0
+# AUTOPARSE_CHAIN=1 derives ISSUER_DID/DID_FINGERPRINT from chain.pem at recipe time
+# so that `did-check` validates against the actual leaf cert in chain.pem.
+# Set to 0 to fall back to the literal placeholder values below.
+AUTOPARSE_CHAIN:=1
 ISSUER_DID:="TestIssuer"
 FEED:="TestFeed"
 DID_FINGERPRINT:=""
@@ -92,12 +93,14 @@ did-from-cose: sign1util infra.rego.cose
 # note that since the infra.rego.cose is actually good the first part of the check will report a pass "checkCoseSign1 passed"
 
 # expect "DID resolvers failed: err: DID verification failed: unexpected certificate fingerprint"
+# The recipe is expected to fail at the tool level; invert the exit code so the make target succeeds.
 did-fail-fingerprint: chain.pem sign1util infra.rego.cose
-	./sign1util check -in infra.rego.cose -did did:x509:0:sha256:XXXi_nuWegx4NiLaeGabiz36bDUhDDiHEFl8HXMA_4o::subject:CN:Test+Leaf+%28DO+NOT+TRUST%29
+	! ./sign1util check -in infra.rego.cose -did did:x509:0:sha256:XXXi_nuWegx4NiLaeGabiz36bDUhDDiHEFl8HXMA_4o::subject:CN:Test+Leaf+%28DO+NOT+TRUST%29
 
 # expect "DID resolvers failed: err: DID verification failed: invalid subject value: CN=Test XXXX (DO NOT TRUST)"
+# The recipe is expected to fail at the tool level; invert the exit code so the make target succeeds.
 did-fail-subject: chain.pem sign1util infra.rego.cose
-	./sign1util check -in infra.rego.cose -did did:x509:0:sha256:$(DID_FINGERPRINT)::subject:CN:Test+XXXX+%28DO+NOT+TRUST%29
+	! ./sign1util check -in infra.rego.cose -did did:x509:0:sha256:$(DID_FINGERPRINT)::subject:CN:Test+XXXX+%28DO+NOT+TRUST%29
 
 did-fail: did-fail-subject did-fail-fingerprint 
 
