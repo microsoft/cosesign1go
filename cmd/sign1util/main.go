@@ -42,11 +42,13 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		fmt.Fprintf(os.Stdout, "payload:\n%s\n", string(unpacked.Payload[:]))
 	}
 
-	// Validate DID parsed from the CoseSign1 document.
 	if len(chainPEMString) == 0 {
 		chainPEMString = unpacked.ChainPem
 	}
-	didDoc, err := didx509resolver.Resolve(chainPEMString, unpacked.Issuer, true)
+	if len(didString) == 0 {
+		didString = unpacked.Issuer
+	}
+	didDoc, err := didx509resolver.Resolve(chainPEMString, didString, true)
 	if err == nil {
 		fmt.Fprintf(os.Stdout, "DID resolvers passed:\n%s\n", didDoc)
 	} else {
@@ -54,19 +56,6 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		fmt.Fprintf(os.Stdout, "DID resolvers failed: err: %s\n", err.Error())
 	}
 
-	// Validate DID provided as a parameter if provided.
-	if len(didString) > 0 {
-		if len(chainPEMString) == 0 {
-			chainPEMString = unpacked.ChainPem
-		}
-		didDoc, err := didx509resolver.Resolve(chainPEMString, didString, true)
-		if err == nil {
-			fmt.Fprintf(os.Stdout, "DID resolvers passed:\n%s\n", didDoc)
-		} else {
-			// all the error paths return an empty string, so we can just print the error
-			fmt.Fprintf(os.Stdout, "DID resolvers failed: err: %s\n", err.Error())
-		}
-	}
 	return unpacked, err
 }
 
