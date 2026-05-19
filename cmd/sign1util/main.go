@@ -176,7 +176,6 @@ var checkCmd = cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
-
 		_, err := checkCoseSign1(
 			ctx.String("in"),
 			ctx.String("chain"),
