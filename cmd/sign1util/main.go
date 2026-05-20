@@ -45,15 +45,18 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 	if len(chainPEMString) == 0 {
 		chainPEMString = unpacked.ChainPem
 	}
-	if len(didString) == 0 {
-		didString = unpacked.Issuer
-	}
-	didDoc, err := didx509resolver.Resolve(chainPEMString, didString, true)
-	if err == nil {
-		fmt.Fprintf(os.Stdout, "DID resolvers passed:\n%s\n", didDoc)
-	} else {
-		// all the error paths return an empty string, so we can just print the error
-		fmt.Fprintf(os.Stdout, "DID resolvers failed: err: %s\n", err.Error())
+	// Only resolve when the caller explicitly asked. Callers like `did-x509 -in`,
+	// `leaf -in`, `print -in` pass an empty didString and don't want DID
+	// resolution. The `check` command supplies its own fallback below.
+	if len(didString) > 0 {
+		var didDoc string
+		didDoc, err = didx509resolver.Resolve(chainPEMString, didString, true)
+		if err == nil {
+			fmt.Fprintf(os.Stdout, "DID resolvers passed:\n%s\n", didDoc)
+		} else {
+			// all the error paths return an empty string, so we can just print the error
+			fmt.Fprintf(os.Stdout, "DID resolvers failed: err: %s\n", err.Error())
+		}
 	}
 
 	return unpacked, err
@@ -176,14 +179,22 @@ var checkCmd = cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
-		_, err := checkCoseSign1(
+		didString := ctx.String("did")
+		unpacked, err := checkCoseSign1(
 			ctx.String("in"),
 			ctx.String("chain"),
-			ctx.String("did"),
+			didString,
 			ctx.Bool("verbose"),
 		)
 		if err != nil {
 			return fmt.Errorf("failed check: %w", err)
+		}
+		// If no explicit -did was given, validate the issuer embedded in the
+		// COSE document against the chain.
+		if len(didString) == 0 && len(unpacked.Issuer) > 0 {
+			if _, err := didx509resolver.Resolve(unpacked.ChainPem, unpacked.Issuer, true); err != nil {
+				return fmt.Errorf("failed check (issuer from cose %q): %w", unpacked.Issuer, err)
+			}
 		}
 		return nil
 	},
