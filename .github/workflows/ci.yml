@@ -24,6 +24,23 @@ jobs:
     - name: Build
       run: go build -v ./...
 
+    - name: Diagnose openssl / time / certs
+      run: |
+        set -x
+        date -u
+        timedatectl status || true
+        openssl version -a
+        grep -Ei 'default_days|^days' /etc/ssl/openssl.cnf || true
+        cd pkg/cosesign1
+        make -f Makefile.certs chain.pem
+        date -u
+        for f in root.cert.pem intermediate.cert.pem leaf.cert.pem; do
+          echo "=== $f ==="
+          openssl x509 -in "$f" -noout -subject -issuer -dates -serial
+        done
+        go build ../../cmd/sign1util
+        ./sign1util did-x509 -chain chain.pem -policy cn || true
+
     - name: Test Makafile commands
       run: |
         cd pkg/cosesign1
