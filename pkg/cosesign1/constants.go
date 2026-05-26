@@ -1,5 +1,7 @@
 package cosesign1
 
+const COSE_Sign1_Tag = 18
+
 // COSE Header Parameters
 // https://www.iana.org/assignments/cose/cose.xhtml
 const (
