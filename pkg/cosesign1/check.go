@@ -410,7 +410,7 @@ func (r ParsedCOSEReceipt) Validate(keys map[string]crypto.PublicKey) error {
 		if err != nil {
 			return fmt.Errorf("inclusion proof %d: %w", i, err)
 		}
-		if len(r.ExpectedDataHash) > 0 && !bytes.Equal(dataHash, r.ExpectedDataHash) {
+		if !bytes.Equal(dataHash, r.ExpectedDataHash) {
 			return fmt.Errorf("inclusion proof %d: leaf data-hash %x does not match the expected value %x for the signed envelope", i, dataHash, r.ExpectedDataHash)
 		}
 		logrus.Debugf("receipt inclusion proof %d recomputed root: %x", i, root)
