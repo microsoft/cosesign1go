@@ -57,15 +57,10 @@ func jwkToPublicKey(k jwk) (crypto.PublicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decoding y: %w", err)
 	}
-	x := new(big.Int).SetBytes(xBytes)
-	y := new(big.Int).SetBytes(yBytes)
-	if !curve.IsOnCurve(x, y) {
-		return nil, fmt.Errorf("invalid JWK: point (X, Y) is not on curve %s", k.Crv)
-	}
 	return &ecdsa.PublicKey{
 		Curve: curve,
-		X:     x,
-		Y:     y,
+		X:     new(big.Int).SetBytes(xBytes),
+		Y:     new(big.Int).SetBytes(yBytes),
 	}, nil
 }
 
