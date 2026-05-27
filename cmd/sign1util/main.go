@@ -77,7 +77,24 @@ func acceptAndPrintCert(issuer string, cert *x509.Certificate) error {
 	return nil
 }
 
-func checkCoseSign1(inputFilename string, chainFilename string, didString string, verbose bool, validateReceipts bool, allowedJWKSDomains []string) (*cosesign1.UnpackedCoseSign1, error) {
+// checkCoseSign1Options controls optional receipt-validation behavior in
+// checkCoseSign1. Exactly one of ValidateReceipts or RequireReceiptFrom may be
+// set; if both are zero values, receipts (if any) are not validated and no
+// JWKS network fetches are performed.
+type checkCoseSign1Options struct {
+	// ValidateReceipts requests validation of every attached receipt without
+	// imposing any constraint on their issuers. AllowedJWKSDomains restricts
+	// which hosts JWKS may be fetched from.
+	ValidateReceipts   bool
+	AllowedJWKSDomains []string
+	// RequireReceiptFrom, when non-empty, requires that at least one receipt
+	// has its issuer exactly equal to this domain. Only receipts matching this
+	// issuer are validated; other receipts are ignored. JWKS fetching is
+	// implicitly restricted to this domain.
+	RequireReceiptFrom string
+}
+
+func checkCoseSign1(inputFilename string, chainFilename string, didString string, verbose bool, opts checkCoseSign1Options) (*cosesign1.UnpackedCoseSign1, error) {
 	coseBlob, err := os.ReadFile(inputFilename)
 	if err != nil {
 		return nil, err
@@ -101,12 +118,45 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 
 	fmt.Fprint(os.Stdout, "checkCoseSign1 passed\n")
 
-	// If the envelope carries COSE Receipts, validate each against the CCF
-	// ledger profile. Receipt validation triggers outbound JWKS fetches and
-	// is therefore opt-in via --validate-receipts.
+	// If the envelope carries COSE Receipts, validate each according to the
+	// caller-provided options. Receipt validation triggers outbound JWKS
+	// fetches and is therefore opt-in.
 	var receiptKeys map[string]crypto.PublicKey
-	if validateReceipts && len(unpacked.Receipts) > 0 {
-		receiptKeys, err = fetchCCFReceiptKeys(unpacked.Receipts, allowedJWKSDomains, acceptAndPrintCert)
+	switch {
+	case opts.RequireReceiptFrom != "" && len(unpacked.Receipts) > 0:
+		// Only validate receipts whose issuer is exactly the required
+		// domain; ignore others. Restrict JWKS fetching to that domain.
+		allowed := []string{opts.RequireReceiptFrom}
+		matching := make([]cosesign1.ParsedCOSEReceipt, 0, len(unpacked.Receipts))
+		matchingIdx := make([]int, 0, len(unpacked.Receipts))
+		for i, r := range unpacked.Receipts {
+			if r.Issuer == opts.RequireReceiptFrom {
+				matching = append(matching, r)
+				matchingIdx = append(matchingIdx, i)
+			}
+		}
+		if len(matching) == 0 {
+			fmt.Fprintf(os.Stdout, "no receipt from required issuer %q found\n", opts.RequireReceiptFrom)
+			return nil, fmt.Errorf("no receipt from required issuer %q found", opts.RequireReceiptFrom)
+		}
+		receiptKeys, err = fetchCCFReceiptKeys(matching, allowed, acceptAndPrintCert)
+		if err != nil {
+			fmt.Fprintf(os.Stdout, "fetching CCF receipt keys failed - %s\n", err)
+			return nil, fmt.Errorf("fetching CCF receipt keys: %w", err)
+		}
+		for n, r := range matching {
+			i := matchingIdx[n]
+			if err := r.Validate(receiptKeys); err != nil {
+				fmt.Fprintf(os.Stdout, "CCF receipt %d from %s validation failed - %s\n", i, r.Issuer, err)
+				return nil, fmt.Errorf("CCF receipt %d from %s validation failed: %w", i, r.Issuer, err)
+			}
+			fmt.Fprintf(os.Stdout, "CCF receipt %d from %s validation passed\n", i, r.Issuer)
+		}
+		if ignored := len(unpacked.Receipts) - len(matching); ignored > 0 {
+			fmt.Fprintf(os.Stdout, "ignored %d receipt(s) not from required issuer %q\n", ignored, opts.RequireReceiptFrom)
+		}
+	case opts.ValidateReceipts && len(unpacked.Receipts) > 0:
+		receiptKeys, err = fetchCCFReceiptKeys(unpacked.Receipts, opts.AllowedJWKSDomains, acceptAndPrintCert)
 		if err != nil {
 			fmt.Fprintf(os.Stdout, "fetching CCF receipt keys failed - %s\n", err)
 			return nil, fmt.Errorf("fetching CCF receipt keys: %w", err)
@@ -118,8 +168,8 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 			}
 			fmt.Fprintf(os.Stdout, "CCF receipt %d from %s validation passed\n", i, r.Issuer)
 		}
-	} else if !validateReceipts && len(unpacked.Receipts) > 0 {
-		fmt.Fprintf(os.Stdout, "skipping validation of %d receipt(s); pass --validate-receipts to fetch JWKS and verify\n", len(unpacked.Receipts))
+	case len(unpacked.Receipts) > 0:
+		fmt.Fprintf(os.Stdout, "skipping validation of %d receipt(s); pass --validate-receipts or --require-receipt-from to fetch JWKS and verify\n", len(unpacked.Receipts))
 	}
 	if verbose {
 		fmt.Fprintf(os.Stdout, "iss: %s\n", unpacked.Issuer)
@@ -339,24 +389,22 @@ var checkCmd = cli.Command{
 			Name:  "verbose",
 			Usage: "verbose output (optional)",
 		},
-		cli.BoolFlag{
-			Name:  "validate-receipts",
-			Usage: "Validate any attached transparent receipts, fetching necessary keys from the issuer",
-		},
-		cli.StringSliceFlag{
-			Name:  "allow-jwks-domain",
-			Usage: "additional domains or parent domains from which JWKS fetches are permitted; may be repeated. This mitigates against SSRF when handling untrusted input.",
+		cli.StringFlag{
+			Name:  "require-receipt-from",
+			Usage: "if set, require at least one attached transparent receipt to have this exact domain as its issuer, and validate it by fetching JWKS from this domain. Any other receipts present are ignored. Issuer matching is an exact equality check, not a subdomain match.",
 		},
 	},
 	Action: func(ctx *cli.Context) error {
 		didString := ctx.String("did")
+		requireFrom := ctx.String("require-receipt-from")
 		unpacked, err := checkCoseSign1(
 			ctx.String("in"),
 			ctx.String("chain"),
 			didString,
 			ctx.Bool("verbose"),
-			ctx.Bool("validate-receipts"),
-			extendJWKSDominsAllowList(ctx.StringSlice("allow-jwks-domain")),
+			checkCoseSign1Options{
+				RequireReceiptFrom: requireFrom,
+			},
 		)
 		if err != nil {
 			return fmt.Errorf("failed check: %w", err)
@@ -383,7 +431,7 @@ var printCmd = cli.Command{
 		},
 		cli.BoolFlag{
 			Name:  "validate-receipts",
-			Usage: "Validate any attached transparent receipts, fetching necessary keys from the issuer",
+			Usage: "If any receipts are present, validate any attached transparent receipts, fetching necessary keys from the issuer. This does not enforce any condition on the issuer of the receipts, but only checks that they are valid.",
 		},
 		cli.StringSliceFlag{
 			Name:  "allow-jwks-domain",
@@ -396,8 +444,10 @@ var printCmd = cli.Command{
 			"",
 			"",
 			true,
-			ctx.Bool("validate-receipts"),
-			extendJWKSDominsAllowList(ctx.StringSlice("allow-jwks-domain")),
+			checkCoseSign1Options{
+				ValidateReceipts:   ctx.Bool("validate-receipts"),
+				AllowedJWKSDomains: extendJWKSDominsAllowList(ctx.StringSlice("allow-jwks-domain")),
+			},
 		)
 		if err != nil {
 			return fmt.Errorf("failed verbose checkCoseSign1: %w", err)
@@ -439,8 +489,7 @@ var leafCmd = cli.Command{
 			"",
 			"",
 			ctx.Bool("verbose"),
-			false,
-			nil,
+			checkCoseSign1Options{},
 		)
 		if err != nil {
 			return fmt.Errorf("reading the COSE Sign1 from %s failed: %w", inputFilename, err)
@@ -518,7 +567,7 @@ var didX509Cmd = cli.Command{
 			chainPEM = string(chainPEMBytes)
 		}
 		if len(inputFilename) > 0 {
-			unpacked, err := checkCoseSign1(inputFilename, "", "", true, false, nil)
+			unpacked, err := checkCoseSign1(inputFilename, "", "", true, checkCoseSign1Options{})
 			if err != nil {
 				return err
 			}
