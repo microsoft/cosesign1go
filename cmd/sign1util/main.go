@@ -169,7 +169,8 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 			fmt.Fprintf(os.Stdout, "CCF receipt %d from %s validation passed\n", i, r.Issuer)
 		}
 	case len(unpacked.Receipts) > 0:
-		fmt.Fprintf(os.Stdout, "skipping validation of %d receipt(s); pass --validate-receipts or --require-receipt-from to fetch JWKS and verify\n", len(unpacked.Receipts))
+		anyDomain := unpacked.Receipts[0].Issuer
+		fmt.Fprintf(os.Stdout, "skipping validation of %d receipt(s); pass --require-receipt-from %s to fetch JWKS and verify\n", len(unpacked.Receipts), anyDomain)
 	}
 	if verbose {
 		fmt.Fprintf(os.Stdout, "iss: %s\n", unpacked.Issuer)
@@ -437,8 +438,13 @@ var printCmd = cli.Command{
 			Name:  "allow-jwks-domain",
 			Usage: "additional domains or parent domains from which JWKS fetches are permitted; may be repeated. This mitigates against SSRF when handling untrusted input.",
 		},
+		cli.StringFlag{
+			Name:  "require-receipt-from",
+			Usage: "If set, require at least one attached transparent receipt to have this exact domain as its issuer, and validate it by fetching JWKS from this domain. Any other receipts present are ignored. Issuer matching is an exact equality check, not a subdomain match.",
+		},
 	},
 	Action: func(ctx *cli.Context) error {
+		requireFrom := ctx.String("require-receipt-from")
 		_, err := checkCoseSign1(
 			ctx.String("in"),
 			"",
@@ -447,6 +453,7 @@ var printCmd = cli.Command{
 			checkCoseSign1Options{
 				ValidateReceipts:   ctx.Bool("validate-receipts"),
 				AllowedJWKSDomains: extendJWKSDominsAllowList(ctx.StringSlice("allow-jwks-domain")),
+				RequireReceiptFrom: requireFrom,
 			},
 		)
 		if err != nil {
