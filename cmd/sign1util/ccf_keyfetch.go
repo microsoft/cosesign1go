@@ -115,6 +115,7 @@ func fetchIssuerJWKS(issuer string, allowedDomains []string, verifyCert CertVeri
 	reqURL := (&url.URL{Scheme: "https", Host: host, Path: "/jwks"}).String()
 	tlsConfig := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // CCF uses self-signed certs that are supposed to be validated via attestation, and so will never pass the normal verification.
 	if verifyCert != nil {
+		// VerifyPeerCertificate is called even if InsecureSkipVerify is true.
 		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			if len(rawCerts) == 0 {
 				return fmt.Errorf("server presented no certificate")
