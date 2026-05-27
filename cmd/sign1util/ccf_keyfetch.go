@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -74,48 +75,32 @@ func jwkToPublicKey(k jwk) (crypto.PublicKey, error) {
 // allowed at the CLI level via --allow-jwks-domain.
 var DefaultAllowedJWKSDomains = []string{"confidential-ledger.azure.com"}
 
-// validateIssuerForJWKSFetch verifies that issuer is a plain host[:port] (no
-// scheme, userinfo, path, query or fragment) and that its host is equal to or
-// a subdomain of one of allowedDomains. The validated host (with optional
-// port) is returned, suitable for use as the Host of an https URL.
+// issuerHostRegex matches a plain DNS host of one or more dot-separated
+// labels with an optional port. Issuers from receipt CWT claims must match
+// this exactly; anything else (schemes, userinfo, paths, IP literals, etc.)
+// is rejected to avoid SSRF when building the JWKS URL.
+var issuerHostRegex = regexp.MustCompile(`^([a-zA-Z0-9\-]+\.)+[a-zA-Z0-9\-]+(:\d+)?$`)
+
+// validateIssuerForJWKSFetch verifies that issuer is a plain host[:port] and
+// that its host is equal to or a subdomain of one of allowedDomains. The
+// validated host (with optional port) is returned, suitable for use as the
+// Host of an https URL.
 func validateIssuerForJWKSFetch(issuer string, allowedDomains []string) (string, error) {
-	if issuer == "" {
-		return "", fmt.Errorf("issuer is empty")
-	}
-	// Reject anything that looks like a URL with a scheme, userinfo, path,
-	// query or fragment so that string-concatenating into "https://<issuer>/jwks"
-	// cannot redirect requests to unexpected destinations (SSRF).
-	if strings.ContainsAny(issuer, "/?#@\\ ") {
+	if !issuerHostRegex.MatchString(issuer) {
 		return "", fmt.Errorf("issuer %q is not a plain host[:port]", issuer)
 	}
-	// Parse with the "//" prefix to force url.Parse to treat issuer as authority.
-	u, err := url.Parse("//" + issuer)
-	if err != nil {
-		return "", fmt.Errorf("issuer %q is not a valid host[:port]: %w", issuer, err)
-	}
-	if u.Scheme != "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("issuer %q must be a plain host[:port]", issuer)
-	}
-	host := u.Hostname()
-	if host == "" {
-		return "", fmt.Errorf("issuer %q has no host", issuer)
+	host := issuer
+	if i := strings.IndexByte(issuer, ':'); i >= 0 {
+		host = issuer[:i]
 	}
 	hostLower := strings.ToLower(host)
-	allowed := false
 	for _, d := range allowedDomains {
-		dl := strings.ToLower(strings.TrimSpace(d))
-		if dl == "" {
-			continue
-		}
+		dl := strings.ToLower(d)
 		if hostLower == dl || strings.HasSuffix(hostLower, "."+dl) {
-			allowed = true
-			break
+			return issuer, nil
 		}
 	}
-	if !allowed {
-		return "", fmt.Errorf("issuer host %q is not in the JWKS domain allow list (use --allow-jwks-domain to add)", host)
-	}
-	return u.Host, nil
+	return "", fmt.Errorf("issuer host %q is not in the JWKS domain allow list (use --allow-jwks-domain to add)", host)
 }
 
 // CertVerifier is invoked with the leaf certificate presented by a CCF node

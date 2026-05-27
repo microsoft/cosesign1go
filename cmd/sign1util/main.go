@@ -56,9 +56,9 @@ func printKeyValue(indent string, k, v interface{}) {
 	fmt.Fprintf(os.Stdout, "%s%v: %s\n", indent, k, formatValue(v))
 }
 
-// combinedJWKSDomains returns the default JWKS domain allow list extended
+// extendJWKSDominsAllowList returns the default JWKS domain allow list extended
 // with any additional domains supplied by the user via --allow-jwks-domain.
-func combinedJWKSDomains(extra []string) []string {
+func extendJWKSDominsAllowList(extra []string) []string {
 	out := make([]string, 0, len(DefaultAllowedJWKSDomains)+len(extra))
 	out = append(out, DefaultAllowedJWKSDomains...)
 	out = append(out, extra...)
@@ -356,7 +356,7 @@ var checkCmd = cli.Command{
 			didString,
 			ctx.Bool("verbose"),
 			ctx.Bool("validate-receipts"),
-			combinedJWKSDomains(ctx.StringSlice("allow-jwks-domain")),
+			extendJWKSDominsAllowList(ctx.StringSlice("allow-jwks-domain")),
 		)
 		if err != nil {
 			return fmt.Errorf("failed check: %w", err)
@@ -397,7 +397,7 @@ var printCmd = cli.Command{
 			"",
 			true,
 			ctx.Bool("validate-receipts"),
-			combinedJWKSDomains(ctx.StringSlice("allow-jwks-domain")),
+			extendJWKSDominsAllowList(ctx.StringSlice("allow-jwks-domain")),
 		)
 		if err != nil {
 			return fmt.Errorf("failed verbose checkCoseSign1: %w", err)
