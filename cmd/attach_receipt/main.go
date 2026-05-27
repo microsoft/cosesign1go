@@ -1,8 +1,6 @@
 // attach_receipt rewrites a COSE_Sign1 envelope's unprotected `receipts`
 // header (label 394), replacing it with either a single raw receipt blob or
-// with the receipts copied from a donor COSE_Sign1 envelope. The protected
-// header, payload, and signature of the input envelope are preserved
-// byte-for-byte by editing the outer CBOR array in place.
+// with the receipts copied from a donor COSE_Sign1 envelope.
 package main
 
 import (

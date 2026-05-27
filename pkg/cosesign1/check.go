@@ -128,10 +128,14 @@ func parseCOSEReceipts(unprotected cose.UnprotectedHeader) ([]ParsedCOSEReceipt,
 		}
 		if cwtVal, ok := msg.Headers.Protected[COSE_Header_CWTClaims]; ok {
 			if cwt, ok := cwtVal.(map[interface{}]interface{}); ok {
-				if iss, ok := cwt[CWT_Issuer].(string); ok {
+				issVal, issPresent := cwt[CWT_Issuer]
+				if !issPresent {
+					return nil, fmt.Errorf("receipt %d: issuer (iss) claim missing from CWT claims", i)
+				}
+				if iss, ok := issVal.(string); ok {
 					rcpt.Issuer = iss
 				} else {
-					return nil, fmt.Errorf("receipt %d: issuer is not a string (got %T)", i, cwt[CWT_Issuer])
+					return nil, fmt.Errorf("receipt %d: issuer is not a string (got %T)", i, issVal)
 				}
 			} else {
 				return nil, fmt.Errorf("receipt %d: CWT claims is not a map (got %T)", i, cwtVal)

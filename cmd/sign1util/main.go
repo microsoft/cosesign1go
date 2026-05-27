@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/Microsoft/cosesign1go/pkg/cosesign1"
@@ -16,13 +17,22 @@ import (
 )
 
 // formatValue formats a CBOR-decoded value in a human-readable way that
-// preserves integer keys (unlike JSON).
+// preserves integer keys (unlike JSON). Map keys are sorted by their
+// formatted representation so the output is deterministic.
 func formatValue(v interface{}) string {
 	switch v := v.(type) {
 	case map[interface{}]interface{}:
-		parts := make([]string, 0, len(v))
+		type kv struct {
+			ks, vs string
+		}
+		entries := make([]kv, 0, len(v))
 		for key, val := range v {
-			parts = append(parts, fmt.Sprintf("%s: %s", formatValue(key), formatValue(val)))
+			entries = append(entries, kv{ks: formatValue(key), vs: formatValue(val)})
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].ks < entries[j].ks })
+		parts := make([]string, 0, len(entries))
+		for _, e := range entries {
+			parts = append(parts, fmt.Sprintf("%s: %s", e.ks, e.vs))
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	case []interface{}:
@@ -46,6 +56,15 @@ func printKeyValue(indent string, k, v interface{}) {
 	fmt.Fprintf(os.Stdout, "%s%v: %s\n", indent, k, formatValue(v))
 }
 
+// combinedJWKSDomains returns the default JWKS domain allow list extended
+// with any additional domains supplied by the user via --allow-jwks-domain.
+func combinedJWKSDomains(extra []string) []string {
+	out := make([]string, 0, len(DefaultAllowedJWKSDomains)+len(extra))
+	out = append(out, DefaultAllowedJWKSDomains...)
+	out = append(out, extra...)
+	return out
+}
+
 // CCF nodes serve TLS using a self-signed certificate whose authenticity is
 // backed by attestation rather than a public CA. Since we have no way to
 // validate the CCF's attestation evidence here, we simply print summary details
@@ -58,7 +77,7 @@ func acceptAndPrintCert(issuer string, cert *x509.Certificate) error {
 	return nil
 }
 
-func checkCoseSign1(inputFilename string, chainFilename string, didString string, verbose bool) (*cosesign1.UnpackedCoseSign1, error) {
+func checkCoseSign1(inputFilename string, chainFilename string, didString string, verbose bool, validateReceipts bool, allowedJWKSDomains []string) (*cosesign1.UnpackedCoseSign1, error) {
 	coseBlob, err := os.ReadFile(inputFilename)
 	if err != nil {
 		return nil, err
@@ -83,10 +102,11 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 	fmt.Fprint(os.Stdout, "checkCoseSign1 passed\n")
 
 	// If the envelope carries COSE Receipts, validate each against the CCF
-	// ledger profile.
+	// ledger profile. Receipt validation triggers outbound JWKS fetches and
+	// is therefore opt-in via --validate-receipts.
 	var receiptKeys map[string]crypto.PublicKey
-	if len(unpacked.Receipts) > 0 {
-		receiptKeys, err = fetchCCFReceiptKeys(unpacked.Receipts, acceptAndPrintCert)
+	if validateReceipts && len(unpacked.Receipts) > 0 {
+		receiptKeys, err = fetchCCFReceiptKeys(unpacked.Receipts, allowedJWKSDomains, acceptAndPrintCert)
 		if err != nil {
 			fmt.Fprintf(os.Stdout, "fetching CCF receipt keys failed - %s\n", err)
 			return nil, fmt.Errorf("fetching CCF receipt keys: %w", err)
@@ -98,6 +118,8 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 			}
 			fmt.Fprintf(os.Stdout, "CCF receipt %d from %s validation passed\n", i, r.Issuer)
 		}
+	} else if !validateReceipts && len(unpacked.Receipts) > 0 {
+		fmt.Fprintf(os.Stdout, "skipping validation of %d receipt(s); pass --validate-receipts to fetch JWKS and verify\n", len(unpacked.Receipts))
 	}
 	if verbose {
 		fmt.Fprintf(os.Stdout, "iss: %s\n", unpacked.Issuer)
@@ -317,6 +339,14 @@ var checkCmd = cli.Command{
 			Name:  "verbose",
 			Usage: "verbose output (optional)",
 		},
+		cli.BoolFlag{
+			Name:  "validate-receipts",
+			Usage: "opt-in to validating attached COSE Receipts; fetches JWKS from each receipt issuer over the network",
+		},
+		cli.StringSliceFlag{
+			Name:  "allow-jwks-domain",
+			Usage: "additional domain (host or parent suffix) from which JWKS fetches are permitted; may be repeated",
+		},
 	},
 	Action: func(ctx *cli.Context) error {
 		didString := ctx.String("did")
@@ -325,6 +355,8 @@ var checkCmd = cli.Command{
 			ctx.String("chain"),
 			didString,
 			ctx.Bool("verbose"),
+			ctx.Bool("validate-receipts"),
+			combinedJWKSDomains(ctx.StringSlice("allow-jwks-domain")),
 		)
 		if err != nil {
 			return fmt.Errorf("failed check: %w", err)
@@ -349,9 +381,24 @@ var printCmd = cli.Command{
 			Usage: "input COSE Sign1 file",
 			Value: "input.cose",
 		},
+		cli.BoolFlag{
+			Name:  "validate-receipts",
+			Usage: "opt-in to validating attached COSE Receipts; fetches JWKS from each receipt issuer over the network",
+		},
+		cli.StringSliceFlag{
+			Name:  "allow-jwks-domain",
+			Usage: "additional domain (host or parent suffix) from which JWKS fetches are permitted; may be repeated",
+		},
 	},
 	Action: func(ctx *cli.Context) error {
-		_, err := checkCoseSign1(ctx.String("in"), "", "", true)
+		_, err := checkCoseSign1(
+			ctx.String("in"),
+			"",
+			"",
+			true,
+			ctx.Bool("validate-receipts"),
+			combinedJWKSDomains(ctx.StringSlice("allow-jwks-domain")),
+		)
 		if err != nil {
 			return fmt.Errorf("failed verbose checkCoseSign1: %w", err)
 		}
@@ -392,6 +439,8 @@ var leafCmd = cli.Command{
 			"",
 			"",
 			ctx.Bool("verbose"),
+			false,
+			nil,
 		)
 		if err != nil {
 			return fmt.Errorf("reading the COSE Sign1 from %s failed: %w", inputFilename, err)
@@ -469,7 +518,7 @@ var didX509Cmd = cli.Command{
 			chainPEM = string(chainPEMBytes)
 		}
 		if len(inputFilename) > 0 {
-			unpacked, err := checkCoseSign1(inputFilename, "", "", true)
+			unpacked, err := checkCoseSign1(inputFilename, "", "", true, false, nil)
 			if err != nil {
 				return err
 			}

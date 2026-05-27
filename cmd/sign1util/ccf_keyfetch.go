@@ -12,6 +12,8 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Microsoft/cosesign1go/pkg/cosesign1"
@@ -54,11 +56,66 @@ func jwkToPublicKey(k jwk) (crypto.PublicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decoding y: %w", err)
 	}
+	x := new(big.Int).SetBytes(xBytes)
+	y := new(big.Int).SetBytes(yBytes)
+	if !curve.IsOnCurve(x, y) {
+		return nil, fmt.Errorf("invalid JWK: point (X, Y) is not on curve %s", k.Crv)
+	}
 	return &ecdsa.PublicKey{
 		Curve: curve,
-		X:     new(big.Int).SetBytes(xBytes),
-		Y:     new(big.Int).SetBytes(yBytes),
+		X:     x,
+		Y:     y,
 	}, nil
+}
+
+// DefaultAllowedJWKSDomains is the default allow list of domains from which
+// JWKS will be fetched when validating CCF receipts. By default only Azure
+// Confidential Ledger endpoints are permitted; additional domains can be
+// allowed at the CLI level via --allow-jwks-domain.
+var DefaultAllowedJWKSDomains = []string{"confidential-ledger.azure.com"}
+
+// validateIssuerForJWKSFetch verifies that issuer is a plain host[:port] (no
+// scheme, userinfo, path, query or fragment) and that its host is equal to or
+// a subdomain of one of allowedDomains. The validated host (with optional
+// port) is returned, suitable for use as the Host of an https URL.
+func validateIssuerForJWKSFetch(issuer string, allowedDomains []string) (string, error) {
+	if issuer == "" {
+		return "", fmt.Errorf("issuer is empty")
+	}
+	// Reject anything that looks like a URL with a scheme, userinfo, path,
+	// query or fragment so that string-concatenating into "https://<issuer>/jwks"
+	// cannot redirect requests to unexpected destinations (SSRF).
+	if strings.ContainsAny(issuer, "/?#@\\ ") {
+		return "", fmt.Errorf("issuer %q is not a plain host[:port]", issuer)
+	}
+	// Parse with the "//" prefix to force url.Parse to treat issuer as authority.
+	u, err := url.Parse("//" + issuer)
+	if err != nil {
+		return "", fmt.Errorf("issuer %q is not a valid host[:port]: %w", issuer, err)
+	}
+	if u.Scheme != "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("issuer %q must be a plain host[:port]", issuer)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("issuer %q has no host", issuer)
+	}
+	hostLower := strings.ToLower(host)
+	allowed := false
+	for _, d := range allowedDomains {
+		dl := strings.ToLower(strings.TrimSpace(d))
+		if dl == "" {
+			continue
+		}
+		if hostLower == dl || strings.HasSuffix(hostLower, "."+dl) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return "", fmt.Errorf("issuer host %q is not in the JWKS domain allow list (use --allow-jwks-domain to add)", host)
+	}
+	return u.Host, nil
 }
 
 // CertVerifier is invoked with the leaf certificate presented by a CCF node
@@ -68,9 +125,14 @@ type CertVerifier func(issuer string, cert *x509.Certificate) error
 
 // fetchIssuerJWKS GETs https://<issuer>/jwks and returns the keys keyed by
 // their `kid`. If verifyCert is not nil, the leaf certificate presented by the
-// server is passed to verifyCert.
-func fetchIssuerJWKS(issuer string, verifyCert CertVerifier) (map[string]crypto.PublicKey, error) {
-	url := "https://" + issuer + "/jwks"
+// server is passed to verifyCert. The issuer host is validated against
+// allowedDomains before any network request is made.
+func fetchIssuerJWKS(issuer string, allowedDomains []string, verifyCert CertVerifier) (map[string]crypto.PublicKey, error) {
+	host, err := validateIssuerForJWKSFetch(issuer, allowedDomains)
+	if err != nil {
+		return nil, err
+	}
+	reqURL := (&url.URL{Scheme: "https", Host: host, Path: "/jwks"}).String()
 	tlsConfig := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // CCF uses self-signed certs that are supposed to be validated via attestation, and so will never pass the normal verification.
 	if verifyCert != nil {
 		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
@@ -90,21 +152,27 @@ func fetchIssuerJWKS(issuer string, verifyCert CertVerifier) (map[string]crypto.
 		},
 		Timeout: 10 * time.Second,
 	}
-	resp, err := client.Get(url)
+	resp, err := client.Get(reqURL)
 	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", url, err)
+		return nil, fmt.Errorf("GET %s: %w", reqURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+		return nil, fmt.Errorf("GET %s: status %d", reqURL, resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
+	// Limit the response body to a sane size to avoid excessive memory usage
+	// from a hostile or misconfigured server.
+	const maxJWKSBytes = 1 << 20 // 1 MiB
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxJWKSBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", url, err)
+		return nil, fmt.Errorf("reading %s: %w", reqURL, err)
+	}
+	if int64(len(body)) > maxJWKSBytes {
+		return nil, fmt.Errorf("reading %s: response exceeds %d bytes", reqURL, maxJWKSBytes)
 	}
 	var set jwkSet
 	if err := json.Unmarshal(body, &set); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", url, err)
+		return nil, fmt.Errorf("parsing %s: %w", reqURL, err)
 	}
 	out := make(map[string]crypto.PublicKey, len(set.Keys))
 	for i, k := range set.Keys {
@@ -116,7 +184,7 @@ func fetchIssuerJWKS(issuer string, verifyCert CertVerifier) (map[string]crypto.
 			// Equal is implemented for all crypto.PublicKey types in std
 			eq, ok := existingKey.(interface{ Equal(crypto.PublicKey) bool })
 			if !ok || !eq.Equal(pub) {
-				return nil, fmt.Errorf("conflicting kid %s seen in JWKS from %s", k.Kid, url)
+				return nil, fmt.Errorf("conflicting kid %s seen in JWKS from %s", k.Kid, reqURL)
 			}
 			continue
 		}
@@ -126,9 +194,11 @@ func fetchIssuerJWKS(issuer string, verifyCert CertVerifier) (map[string]crypto.
 }
 
 // fetchCCFReceiptKeys returns a kid->PublicKey map by fetching the JWKS for
-// each unique receipt issuer. If not nil, verifyCert is invoked with the leaf
-// certificate presented by each issuer.
-func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt, verifyCert CertVerifier) (map[string]crypto.PublicKey, error) {
+// each unique receipt issuer. allowedDomains is the list of domains that
+// receipt issuers must match (equal or subdomain) before any network request
+// is made. If not nil, verifyCert is invoked with the leaf certificate
+// presented by each issuer.
+func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt, allowedDomains []string, verifyCert CertVerifier) (map[string]crypto.PublicKey, error) {
 	seen := map[string]bool{}
 	keys := map[string]crypto.PublicKey{}
 	for _, r := range receipts {
@@ -139,7 +209,7 @@ func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt, verifyCert Cert
 			continue
 		}
 		seen[r.Issuer] = true
-		issuerKeys, err := fetchIssuerJWKS(r.Issuer, verifyCert)
+		issuerKeys, err := fetchIssuerJWKS(r.Issuer, allowedDomains, verifyCert)
 		if err != nil {
 			return nil, err
 		}
