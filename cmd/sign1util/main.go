@@ -341,11 +341,11 @@ var checkCmd = cli.Command{
 		},
 		cli.BoolFlag{
 			Name:  "validate-receipts",
-			Usage: "opt-in to validating attached COSE Receipts; fetches JWKS from each receipt issuer over the network",
+			Usage: "Validate any attached transparent receipts, fetching necessary keys from the issuer",
 		},
 		cli.StringSliceFlag{
 			Name:  "allow-jwks-domain",
-			Usage: "additional domain (host or parent suffix) from which JWKS fetches are permitted; may be repeated",
+			Usage: "additional domains or parent domains from which JWKS fetches are permitted; may be repeated. This mitigates against SSRF when handling untrusted input.",
 		},
 	},
 	Action: func(ctx *cli.Context) error {
@@ -383,11 +383,11 @@ var printCmd = cli.Command{
 		},
 		cli.BoolFlag{
 			Name:  "validate-receipts",
-			Usage: "opt-in to validating attached COSE Receipts; fetches JWKS from each receipt issuer over the network",
+			Usage: "Validate any attached transparent receipts, fetching necessary keys from the issuer",
 		},
 		cli.StringSliceFlag{
 			Name:  "allow-jwks-domain",
-			Usage: "additional domain (host or parent suffix) from which JWKS fetches are permitted; may be repeated",
+			Usage: "additional domains or parent domains from which JWKS fetches are permitted; may be repeated. This mitigates against SSRF when handling untrusted input.",
 		},
 	},
 	Action: func(ctx *cli.Context) error {
