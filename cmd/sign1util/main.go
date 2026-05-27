@@ -78,9 +78,9 @@ func acceptAndPrintCert(issuer string, cert *x509.Certificate) error {
 }
 
 // checkCoseSign1Options controls optional receipt-validation behavior in
-// checkCoseSign1. Exactly one of ValidateReceipts or RequireReceiptFrom may be
-// set; if both are zero values, receipts (if any) are not validated and no
-// JWKS network fetches are performed.
+// checkCoseSign1. If RequireReceiptFrom is non-empty it takes precedence over
+// ValidateReceipts; if both are zero values, receipts (if any) are not
+// validated and no JWKS network fetches are performed.
 type checkCoseSign1Options struct {
 	// ValidateReceipts requests validation of every attached receipt without
 	// imposing any constraint on their issuers. AllowedJWKSDomains restricts
@@ -391,7 +391,7 @@ var checkCmd = cli.Command{
 		},
 		cli.StringFlag{
 			Name:  "require-receipt-from",
-			Usage: "if set, require at least one attached transparent receipt to have this exact domain as its issuer, and validate it by fetching JWKS from this domain. Any other receipts present are ignored. Issuer matching is an exact equality check, not a subdomain match.",
+			Usage: "If set, require at least one attached transparent receipt to have this exact domain as its issuer, and validate it by fetching JWKS from this domain. Any other receipts present are ignored. Issuer matching is an exact equality check, not a subdomain match.",
 		},
 	},
 	Action: func(ctx *cli.Context) error {
