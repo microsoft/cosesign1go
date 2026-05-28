@@ -1,6 +1,6 @@
 module github.com/Microsoft/cosesign1go
 
-go 1.20
+go 1.24.0
 
 require (
 	github.com/Microsoft/didx509go v0.0.3
@@ -23,6 +23,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.21.0 // indirect
-	golang.org/x/sys v0.18.0 // indirect
+	golang.org/x/crypto v0.45.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
 )
