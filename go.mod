@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	github.com/Microsoft/didx509go v0.0.3
-	github.com/fxamacker/cbor/v2 v2.4.0
+	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/sirupsen/logrus v1.9.3
 	github.com/urfave/cli v1.22.15
 	github.com/veraison/go-cose v1.1.0
