@@ -214,9 +214,10 @@ func encodeKeySet(keys []kidWithParsedKey) ([]byte, error) {
 // fetchCCFReceiptKeys returns a kid->PublicKey map by fetching the JWKS for
 // each unique receipt issuer. allowedDomains is the list of domains that
 // receipt issuers must match (equal or subdomain) before any network request
-// is made. If not nil, verifyCert is invoked with the leaf certificate
-// presented by each issuer.
-func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt, allowedDomains []string, verifyCert CertVerifier) (map[string]crypto.PublicKey, error) {
+// is made. If a receipt's issuer is present in preloaded, the supplied keys are
+// used for that issuer instead of fetching its JWKS over the network. If not
+// nil, verifyCert is invoked with the leaf certificate presented by each issuer.
+func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt, allowedDomains []string, preloaded map[string]map[string]crypto.PublicKey, verifyCert CertVerifier) (map[string]crypto.PublicKey, error) {
 	seen := map[string]bool{}
 	keys := map[string]crypto.PublicKey{}
 	for _, r := range receipts {
@@ -227,9 +228,15 @@ func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt, allowedDomains 
 			continue
 		}
 		seen[r.Issuer] = true
-		issuerKeys, _, err := fetchIssuerJWKS(r.Issuer, allowedDomains, verifyCert)
-		if err != nil {
-			return nil, err
+		var issuerKeys map[string]crypto.PublicKey
+		if preloadedKeys, ok := preloaded[r.Issuer]; ok {
+			issuerKeys = preloadedKeys
+		} else {
+			var err error
+			issuerKeys, _, err = fetchIssuerJWKS(r.Issuer, allowedDomains, verifyCert)
+			if err != nil {
+				return nil, err
+			}
 		}
 		for kid, k := range issuerKeys {
 			if _, exists := keys[kid]; exists {
