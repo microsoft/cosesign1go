@@ -18,6 +18,9 @@ import (
 	"time"
 
 	"github.com/Microsoft/cosesign1go/pkg/cosesign1"
+	"github.com/fxamacker/cbor/v2"
+	"github.com/pkg/errors"
+	"github.com/veraison/go-cose"
 )
 
 // jwk is a minimal JSON Web Key representation used to parse CCF transparency
@@ -103,14 +106,19 @@ func validateIssuerForJWKSFetch(issuer string, allowedDomains []string) (string,
 // error aborts the connection.
 type CertVerifier func(issuer string, cert *x509.Certificate) error
 
+type kidWithParsedKey struct {
+	Kid string
+	Key crypto.PublicKey
+}
+
 // fetchIssuerJWKS GETs https://<issuer>/jwks and returns the keys keyed by
-// their `kid`. If verifyCert is not nil, the leaf certificate presented by the
-// server is passed to verifyCert. The issuer host is validated against
-// allowedDomains before any network request is made.
-func fetchIssuerJWKS(issuer string, allowedDomains []string, verifyCert CertVerifier) (map[string]crypto.PublicKey, error) {
+// their `kid` as either a map or a list. If verifyCert is not nil, the leaf
+// certificate presented by the server is passed to verifyCert. The issuer host
+// is validated against allowedDomains before any network request is made.
+func fetchIssuerJWKS(issuer string, allowedDomains []string, verifyCert CertVerifier) (outMap map[string]crypto.PublicKey, outList []kidWithParsedKey, err error) {
 	host, err := validateIssuerForJWKSFetch(issuer, allowedDomains)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	reqURL := (&url.URL{Scheme: "https", Host: host, Path: "/jwks"}).String()
 	tlsConfig := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // CCF uses self-signed certs that are supposed to be validated via attestation, and so will never pass the normal verification.
@@ -135,43 +143,72 @@ func fetchIssuerJWKS(issuer string, allowedDomains []string, verifyCert CertVeri
 	}
 	resp, err := client.Get(reqURL)
 	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", reqURL, err)
+		return nil, nil, fmt.Errorf("GET %s: %w", reqURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: status %d", reqURL, resp.StatusCode)
+		return nil, nil, fmt.Errorf("GET %s: status %d", reqURL, resp.StatusCode)
 	}
 	// Limit the response body to a sane size to avoid excessive memory usage
 	// from a hostile or misconfigured server.
 	const maxJWKSBytes = 1 << 20 // 1 MiB
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxJWKSBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", reqURL, err)
+		return nil, nil, fmt.Errorf("reading %s: %w", reqURL, err)
 	}
 	if int64(len(body)) > maxJWKSBytes {
-		return nil, fmt.Errorf("reading %s: response exceeds %d bytes", reqURL, maxJWKSBytes)
+		return nil, nil, fmt.Errorf("reading %s: response exceeds %d bytes", reqURL, maxJWKSBytes)
 	}
 	var set jwkSet
 	if err := json.Unmarshal(body, &set); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", reqURL, err)
+		return nil, nil, fmt.Errorf("parsing %s: %w", reqURL, err)
 	}
-	out := make(map[string]crypto.PublicKey, len(set.Keys))
+	outMap = make(map[string]crypto.PublicKey, len(set.Keys))
+	outList = make([]kidWithParsedKey, 0, len(set.Keys))
 	for i, k := range set.Keys {
 		pub, err := jwkToPublicKey(k)
 		if err != nil {
-			return nil, fmt.Errorf("key %d (kid=%s): %w", i, k.Kid, err)
+			return nil, nil, fmt.Errorf("key %d (kid=%s): %w", i, k.Kid, err)
 		}
-		if existingKey, exists := out[k.Kid]; exists {
+		if existingKey, exists := outMap[k.Kid]; exists {
 			// Equal is implemented for all crypto.PublicKey types in std
 			eq, ok := existingKey.(interface{ Equal(crypto.PublicKey) bool })
 			if !ok || !eq.Equal(pub) {
-				return nil, fmt.Errorf("conflicting kid %s seen in JWKS from %s", k.Kid, reqURL)
+				return nil, nil, fmt.Errorf("conflicting kid %s seen in JWKS from %s", k.Kid, reqURL)
 			}
 			continue
 		}
-		out[k.Kid] = pub
+		outMap[k.Kid] = pub
+		outList = append(outList, kidWithParsedKey{Kid: k.Kid, Key: pub})
 	}
-	return out, nil
+	return outMap, outList, nil
+}
+
+// Encodes a list of fetched keys into a COSE_KeySet.
+func encodeKeySet(keys []kidWithParsedKey) ([]byte, error) {
+	if len(keys) == 0 {
+		return nil, errors.New("empty keys list")
+	}
+	rawKeys := make([]cbor.RawMessage, 0, len(keys))
+	for _, kidWithKey := range keys {
+		kid := kidWithKey.Kid
+		pk := kidWithKey.Key
+		k, err := cose.NewKeyFromPublic(pk)
+		if err != nil {
+			return nil, errors.Wrapf(err, "construct cose.Key for key ID %q", kid)
+		}
+		k.ID = []byte(kid)
+		raw, err := k.MarshalCBOR()
+		if err != nil {
+			return nil, errors.Wrapf(err, "MarshalCBOR for key ID %q", kid)
+		}
+		rawKeys = append(rawKeys, raw)
+	}
+	data, err := cbor.Marshal(rawKeys)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to encode the COSE_KeySet")
+	}
+	return data, nil
 }
 
 // fetchCCFReceiptKeys returns a kid->PublicKey map by fetching the JWKS for
@@ -190,7 +227,7 @@ func fetchCCFReceiptKeys(receipts []cosesign1.ParsedCOSEReceipt, allowedDomains 
 			continue
 		}
 		seen[r.Issuer] = true
-		issuerKeys, err := fetchIssuerJWKS(r.Issuer, allowedDomains, verifyCert)
+		issuerKeys, _, err := fetchIssuerJWKS(r.Issuer, allowedDomains, verifyCert)
 		if err != nil {
 			return nil, err
 		}

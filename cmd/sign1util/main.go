@@ -623,6 +623,39 @@ var chainCmd = cli.Command{
 	},
 }
 
+var fetchLedgerKeysetCmd = cli.Command{
+	Name:  "fetch-ledger-keyset",
+	Usage: "fetch the JWKS for a ledger and write it as a COSE_KeySet",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:     "ledger",
+			Usage:    "ledger name (required)",
+			Required: true,
+		},
+		cli.StringFlag{
+			Name:     "out",
+			Usage:    "output COSE_KeySet file (required)",
+			Required: true,
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		ledger := ctx.String("ledger")
+		_, keyList, err := fetchIssuerJWKS(ledger, []string{ledger}, acceptAndPrintCert)
+		if err != nil {
+			return fmt.Errorf("fetching JWKS from ledger %q: %w", ledger, err)
+		}
+		keyset, err := encodeKeySet(keyList)
+		if err != nil {
+			return fmt.Errorf("encoding COSE_KeySet: %w", err)
+		}
+		if err := cosesign1.WriteBlob(ctx.String("out"), keyset); err != nil {
+			return fmt.Errorf("failed to write output file: %w", err)
+		}
+		fmt.Fprintf(os.Stdout, "wrote COSE_KeySet with %d key(s) to %s\n", len(keyList), ctx.String("out"))
+		return nil
+	},
+}
+
 func main() {
 	app := cli.NewApp()
 	app.Name = "sign1util"
@@ -649,6 +682,7 @@ func main() {
 		leafCmd,
 		didX509Cmd,
 		chainCmd,
+		fetchLedgerKeysetCmd,
 	}
 
 	if err := app.Run(os.Args); err != nil {
