@@ -211,6 +211,28 @@ func encodeKeySet(keys []kidWithParsedKey) ([]byte, error) {
 	return data, nil
 }
 
+// encodeTTLPayload encodes a map from issuer to that issuer's fetched keys into
+// an (unsigned) Transparency Trust List payload: a CBOR map from issuer strings
+// to COSE_KeySet.
+func encodeTTLPayload(issuerKeys map[string][]kidWithParsedKey) ([]byte, error) {
+	if len(issuerKeys) == 0 {
+		return nil, errors.New("empty TTL payload")
+	}
+	payload := make(map[string]cbor.RawMessage, len(issuerKeys))
+	for issuer, keys := range issuerKeys {
+		keySet, err := encodeKeySet(keys)
+		if err != nil {
+			return nil, errors.Wrapf(err, "encoding COSE_KeySet for issuer %q", issuer)
+		}
+		payload[issuer] = keySet
+	}
+	data, err := cbor.Marshal(payload)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to encode the TTL payload")
+	}
+	return data, nil
+}
+
 // fetchCCFReceiptKeys returns a kid->PublicKey map by fetching the JWKS for
 // each unique receipt issuer. allowedDomains is the list of domains that
 // receipt issuers must match (equal or subdomain) before any network request
