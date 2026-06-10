@@ -41,9 +41,13 @@ func ParseKeySetAsMap(data []byte) (map[string]crypto.PublicKey, error) {
 			lastKeyError = errors.Wrapf(err, "construct PublicKey from element %d", i)
 			continue
 		}
-		if _, exists := keys[kid]; exists {
-			logrus.Warnf("Parsing element %d of the COSE Key Set: Key with ID %q already seen earlier, ignoring this one", i, kid)
-			continue
+		if existingKey, exists := keys[kid]; exists {
+			// Equal is implemented for all crypto.PublicKey types in std
+			eq, ok := existingKey.(interface{ Equal(crypto.PublicKey) bool })
+			if !ok || !eq.Equal(pk) {
+				logrus.Warnf("Parsing element %d of the COSE Key Set: Key with ID %q already seen earlier but got another conflicting key with same ID, ignoring this one", i, kid)
+				continue
+			}
 		}
 		keys[kid] = pk
 	}
