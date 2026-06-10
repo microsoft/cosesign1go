@@ -57,3 +57,27 @@ func ParseKeySetAsMap(data []byte) (map[string]crypto.PublicKey, error) {
 	}
 	return keys, nil
 }
+
+// ParseTTLPayload parses an unsigned body of a Transparency Trust List (TTL),
+// which is a CBOR map from issuer strings to COSE_KeySet, into a map from
+// issuer to that issuer's map of key IDs to public keys.
+//
+// Reference: https://github.com/achamayou/scitt-ccf-ledger/blob/ttl/docs/transparent_trust_lists.md
+func ParseTTLPayload(data []byte) (map[string]map[string]crypto.PublicKey, error) {
+	var rawIssuers map[string]cbor.RawMessage
+	if err := cbor.Unmarshal(data, &rawIssuers); err != nil {
+		return nil, errors.Wrap(err, "Failed to parse the TTL payload")
+	}
+	if len(rawIssuers) == 0 {
+		return nil, errors.New("empty TTL payload")
+	}
+	out := make(map[string]map[string]crypto.PublicKey, len(rawIssuers))
+	for issuer, rawKeySet := range rawIssuers {
+		keys, err := ParseKeySetAsMap(rawKeySet)
+		if err != nil {
+			return nil, errors.Wrapf(err, "parsing COSE_KeySet for issuer %q", issuer)
+		}
+		out[issuer] = keys
+	}
+	return out, nil
+}
