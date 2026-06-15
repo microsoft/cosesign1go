@@ -212,19 +212,20 @@ func encodeKeySet(keys []kidWithParsedKey) ([]byte, error) {
 }
 
 // encodeTTLPayload encodes a map from issuer to that issuer's fetched keys into
-// an (unsigned) Transparency Trust List payload: a CBOR map from issuer strings
-// to COSE_KeySet.
+// an (unsigned) Transparency Trust List payload.
 func encodeTTLPayload(issuerKeys map[string][]kidWithParsedKey) ([]byte, error) {
 	if len(issuerKeys) == 0 {
 		return nil, errors.New("empty TTL payload")
 	}
-	payload := make(map[string]cbor.RawMessage, len(issuerKeys))
+	payload := make(map[string]map[int64]cbor.RawMessage, len(issuerKeys))
 	for issuer, keys := range issuerKeys {
 		keySet, err := encodeKeySet(keys)
 		if err != nil {
 			return nil, errors.Wrapf(err, "encoding COSE_KeySet for issuer %q", issuer)
 		}
-		payload[issuer] = keySet
+		payload[issuer] = map[int64]cbor.RawMessage{
+			cosesign1.TTL_LedgerEntry_Keys: keySet,
+		}
 	}
 	data, err := cbor.Marshal(payload)
 	if err != nil {

@@ -64,8 +64,10 @@ func ParseKeySetAsMap(data []byte) (map[string]crypto.PublicKey, error) {
 }
 
 // ParseTTLPayload parses an unsigned body of a Transparency Trust List (TTL),
-// which is a CBOR map from issuer strings to COSE_KeySet, into a map from
-// issuer to that issuer's map of key IDs to public keys.
+// which is a CBOR map from issuer strings to LedgerEntry maps. Each LedgerEntry
+// is a CBOR map keyed by integer attributes; the TTL_LedgerEntry_Keys (1)
+// attribute holds that issuer's COSE_KeySet. The result is a map from issuer to
+// that issuer's map of key IDs to public keys.
 //
 // Reference: https://github.com/achamayou/scitt-ccf-ledger/blob/ttl/docs/transparent_trust_lists.md
 func ParseTTLPayload(data []byte) (map[string]map[string]crypto.PublicKey, error) {
@@ -77,7 +79,15 @@ func ParseTTLPayload(data []byte) (map[string]map[string]crypto.PublicKey, error
 		return nil, errors.New("empty TTL payload")
 	}
 	out := make(map[string]map[string]crypto.PublicKey, len(rawIssuers))
-	for issuer, rawKeySet := range rawIssuers {
+	for issuer, rawEntry := range rawIssuers {
+		var entry map[int64]cbor.RawMessage
+		if err := cbor.Unmarshal(rawEntry, &entry); err != nil {
+			return nil, errors.Wrapf(err, "parsing LedgerEntry for issuer %q", issuer)
+		}
+		rawKeySet, ok := entry[TTL_LedgerEntry_Keys]
+		if !ok {
+			return nil, errors.Errorf("LedgerEntry for issuer %q is missing the keys attribute (%d)", issuer, TTL_LedgerEntry_Keys)
+		}
 		keys, err := ParseKeySetAsMap(rawKeySet)
 		if err != nil {
 			return nil, errors.Wrapf(err, "parsing COSE_KeySet for issuer %q", issuer)
