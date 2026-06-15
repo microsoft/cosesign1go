@@ -417,7 +417,7 @@ var checkCmd = cli.Command{
 		},
 		cli.StringFlag{
 			Name:  "ttl",
-			Usage: "Optional path to a file containing an unsigned Transparency Trust List (TTL) payload, which is a CBOR map from issuer to COSE_KeySet. When a receipt's issuer is present in the TTL, its keys are used to validate the receipt instead of fetching the ledger's JWKS.",
+			Usage: "Optional path to a file containing an unsigned Transparency Trust List (TTL) payload, which is a CBOR map from issuer to COSE_KeySet. When a receipt's issuer is present in the TTL, its keys are used to validate the receipt instead of fetching the keys from the ledger.",
 		},
 	},
 	Action: func(ctx *cli.Context) error {

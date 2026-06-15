@@ -35,6 +35,11 @@ func ParseKeySetAsMap(data []byte) (map[string]crypto.PublicKey, error) {
 			continue
 		}
 		kid := string(k.ID)
+		if kid == "" {
+			logrus.Warnf("Failed to parse element %d of the COSE Key Set: missing key ID, ignoring this key", i)
+			lastKeyError = errors.Errorf("missing key ID in element %d", i)
+			continue
+		}
 		pk, err := k.PublicKey()
 		if err != nil {
 			logrus.Warnf("Failed to construct public key from element %d of the COSE Key Set (kid=%q): %v", i, kid, err)
