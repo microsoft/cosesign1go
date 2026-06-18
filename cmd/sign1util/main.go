@@ -279,8 +279,10 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 	return unpacked, err
 }
 
-// parseTTLFile reads and parses an unsigned body of a Transparency Trust List
-// (TTL) from a file.
+// parseTTLFile reads and parses a Transparency Trust List (TTL) from a file.
+// The file may be a raw (unsigned) TTL payload (a CBOR map), or a signed
+// COSE_Sign1 envelope wrapping that payload; in the latter case the envelope is
+// unwrapped to recover the payload.
 func parseTTLFile(file string) (map[string]map[string]crypto.PublicKey, error) {
 	if file == "" {
 		return nil, nil
@@ -289,7 +291,20 @@ func parseTTLFile(file string) (map[string]map[string]crypto.PublicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading TTL file %q: %w", file, err)
 	}
-	keysets, err := cosesign1.ParseTTLPayload(data)
+	// A COSE_Sign1 is a CBOR tag 18 (#6.18) item, encoded as the single byte
+	// 0xD2 (major type 6 | tag 18). Treat anything carrying that tag as a
+	// signed envelope to be unwrapped; otherwise parse the bytes as a raw TTL
+	// payload.
+	const coseSign1TagByte = 0xC0 | cosesign1.COSE_Sign1_Tag // 0xD2
+	payload := data
+	if len(data) > 0 && data[0] == coseSign1TagByte {
+		unpacked, err := cosesign1.UnpackAndValidateCOSE1CertChain(data)
+		if err != nil {
+			return nil, fmt.Errorf("unwrapping signed TTL file %q: %w", file, err)
+		}
+		payload = unpacked.Payload
+	}
+	keysets, err := cosesign1.ParseTTLPayload(payload)
 	if err != nil {
 		return nil, fmt.Errorf("parsing TTL file %q: %w", file, err)
 	}
