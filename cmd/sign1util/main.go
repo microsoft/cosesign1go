@@ -678,6 +678,40 @@ var chainCmd = cli.Command{
 	},
 }
 
+var dumpTTLCmd = cli.Command{
+	Name:  "dump-ttl",
+	Usage: "parse a (signed or unsigned) Transparency Trust List and print its keys as prettified JSON",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:     "in",
+			Usage:    "input TTL file, either a raw unsigned TTL payload or a signed COSE_Sign1 envelope (required)",
+			Required: true,
+		},
+		cli.StringFlag{
+			Name:  "out",
+			Usage: "output JSON file (default: stdout)",
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		ttl, err := parseTTLFile(ctx.String("in"))
+		if err != nil {
+			return fmt.Errorf("failed to load TTL: %w", err)
+		}
+		jsonBytes, err := ttlToJWKSJSON(ttl)
+		if err != nil {
+			return fmt.Errorf("rendering TTL as JSON: %w", err)
+		}
+		if out := ctx.String("out"); out != "" {
+			if err := cosesign1.WriteBlob(out, jsonBytes); err != nil {
+				return fmt.Errorf("failed to write output file: %w", err)
+			}
+		} else {
+			fmt.Fprintf(os.Stdout, "%s\n", string(jsonBytes))
+		}
+		return nil
+	},
+}
+
 var ttlFromLedgerCmd = cli.Command{
 	Name:  "ttl-from-ledger",
 	Usage: "fetch the JWKS for one or more ledgers and write them as an (unsigned) Transparency Trust List",
@@ -746,6 +780,7 @@ func main() {
 		leafCmd,
 		didX509Cmd,
 		chainCmd,
+		dumpTTLCmd,
 		ttlFromLedgerCmd,
 	}
 

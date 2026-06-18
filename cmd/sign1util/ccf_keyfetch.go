@@ -2,15 +2,11 @@ package main
 
 import (
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -22,50 +18,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/veraison/go-cose"
 )
-
-// jwk is a minimal JSON Web Key representation used to parse CCF transparency
-// service /jwks responses.
-type jwk struct {
-	Kty string `json:"kty"`
-	Crv string `json:"crv"`
-	Kid string `json:"kid"`
-	X   string `json:"x"`
-	Y   string `json:"y"`
-}
-
-type jwkSet struct {
-	Keys []jwk `json:"keys"`
-}
-
-func jwkToPublicKey(k jwk) (crypto.PublicKey, error) {
-	if k.Kty != "EC" {
-		return nil, fmt.Errorf("unsupported kty %q", k.Kty)
-	}
-	var curve elliptic.Curve
-	switch k.Crv {
-	case "P-256":
-		curve = elliptic.P256()
-	case "P-384":
-		curve = elliptic.P384()
-	case "P-521":
-		curve = elliptic.P521()
-	default:
-		return nil, fmt.Errorf("unsupported curve %q", k.Crv)
-	}
-	xBytes, err := base64.RawURLEncoding.DecodeString(k.X)
-	if err != nil {
-		return nil, fmt.Errorf("decoding x: %w", err)
-	}
-	yBytes, err := base64.RawURLEncoding.DecodeString(k.Y)
-	if err != nil {
-		return nil, fmt.Errorf("decoding y: %w", err)
-	}
-	return &ecdsa.PublicKey{
-		Curve: curve,
-		X:     new(big.Int).SetBytes(xBytes),
-		Y:     new(big.Int).SetBytes(yBytes),
-	}, nil
-}
 
 // DefaultAllowedJWKSDomains is the default allow list of domains from which
 // JWKS will be fetched when validating CCF receipts. By default only Azure
