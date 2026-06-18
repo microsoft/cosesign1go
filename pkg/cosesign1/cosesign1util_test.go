@@ -244,6 +244,7 @@ const (
 	envelopeReceiptCWTSubject = "scitt.ccf.signature.v1"
 	graftedEnvelopeFile       = "esrp_with_grafted_receipt.cose"
 	graftedEnvelopeJWKSFile   = "esrp_cp_ledger_pub_keys.json"
+	signedTTLFile             = "aci-cc-ttl.ttl.cose"
 )
 
 // Test_UnpackTransparentHashEnvelope verifies that a CWT-based envelope's
@@ -397,5 +398,37 @@ func Test_GraftedReceiptIsRejected(t *testing.T) {
 	keys := loadJWKSFile(t, graftedEnvelopeJWKSFile)
 	if err := unpacked.Receipts[0].Validate(keys); err == nil {
 		t.Errorf("grafted receipt unexpectedly passed validation: envelope/receipt mismatch is not checked")
+	}
+}
+
+// Test_ParseSignedTTLKeySet tests TTL parsing with a pre-made TTL.
+func Test_ParseSignedTTLKeySet(t *testing.T) {
+	raw, err := os.ReadFile(signedTTLFile)
+	if err != nil {
+		t.Fatalf("reading %s: %s", signedTTLFile, err)
+	}
+	unpacked, err := UnpackAndValidateCOSE1CertChain(raw)
+	if err != nil {
+		t.Fatalf("UnpackAndValidateCOSE1CertChain failed: %s", err)
+	}
+	keysets, err := ParseTTLPayload(unpacked.Payload)
+	if err != nil {
+		t.Fatalf("ParseTTLPayload failed: %s", err)
+	}
+	if len(keysets) == 0 {
+		t.Fatalf("ParseTTLPayload returned no ledgers")
+	}
+	for issuer, keys := range keysets {
+		if len(keys) == 0 {
+			t.Errorf("ledger %q has no keys", issuer)
+		}
+		for kid, pk := range keys {
+			if kid == "" {
+				t.Errorf("ledger %q has a key with an empty kid", issuer)
+			}
+			if pk == nil {
+				t.Errorf("ledger %q kid %q has a nil public key", issuer, kid)
+			}
+		}
 	}
 }
