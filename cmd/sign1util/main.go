@@ -92,6 +92,10 @@ type checkCoseSign1Options struct {
 	// issuer are validated; other receipts are ignored. JWKS fetching is
 	// implicitly restricted to this domain.
 	RequireReceiptFrom string
+	// TTL maps a ledger (receipt issuer) name to a preloaded set of keys
+	// (kid->PublicKey). When a receipt's issuer is present here, those keys are
+	// used instead of fetching the ledger's JWKS over the network.
+	TTL map[string]map[string]crypto.PublicKey
 }
 
 func checkCoseSign1(inputFilename string, chainFilename string, didString string, verbose bool, opts checkCoseSign1Options) (*cosesign1.UnpackedCoseSign1, error) {
@@ -139,7 +143,7 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 			fmt.Fprintf(os.Stdout, "no receipt from required issuer %q found\n", opts.RequireReceiptFrom)
 			return nil, fmt.Errorf("no receipt from required issuer %q found", opts.RequireReceiptFrom)
 		}
-		receiptKeys, err = fetchCCFReceiptKeys(matching, allowed, acceptAndPrintCert)
+		receiptKeys, err = fetchCCFReceiptKeys(matching, allowed, opts.TTL, acceptAndPrintCert)
 		if err != nil {
 			fmt.Fprintf(os.Stdout, "fetching CCF receipt keys failed - %s\n", err)
 			return nil, fmt.Errorf("fetching CCF receipt keys: %w", err)
@@ -156,7 +160,7 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 			fmt.Fprintf(os.Stdout, "ignored %d receipt(s) not from required issuer %q\n", ignored, opts.RequireReceiptFrom)
 		}
 	case opts.ValidateReceipts && len(unpacked.Receipts) > 0:
-		receiptKeys, err = fetchCCFReceiptKeys(unpacked.Receipts, opts.AllowedJWKSDomains, acceptAndPrintCert)
+		receiptKeys, err = fetchCCFReceiptKeys(unpacked.Receipts, opts.AllowedJWKSDomains, opts.TTL, acceptAndPrintCert)
 		if err != nil {
 			fmt.Fprintf(os.Stdout, "fetching CCF receipt keys failed - %s\n", err)
 			return nil, fmt.Errorf("fetching CCF receipt keys: %w", err)
@@ -273,6 +277,38 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 	}
 
 	return unpacked, err
+}
+
+// parseTTLFile reads and parses a Transparency Trust List (TTL) from a file.
+// The file may be a raw (unsigned) TTL payload (a CBOR map), or a signed
+// COSE_Sign1 envelope wrapping that payload; in the latter case the envelope is
+// unwrapped to recover the payload.
+func parseTTLFile(file string) (map[string]map[string]crypto.PublicKey, error) {
+	if file == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("reading TTL file %q: %w", file, err)
+	}
+	// A COSE_Sign1 is a CBOR tag 18 (#6.18) item, encoded as the single byte
+	// 0xD2 (major type 6 | tag 18). Treat anything carrying that tag as a
+	// signed envelope to be unwrapped; otherwise parse the bytes as a raw TTL
+	// payload.
+	const coseSign1TagByte = 0xC0 | cosesign1.COSE_Sign1_Tag // 0xD2
+	payload := data
+	if len(data) > 0 && data[0] == coseSign1TagByte {
+		unpacked, err := cosesign1.UnpackAndValidateCOSE1CertChain(data)
+		if err != nil {
+			return nil, fmt.Errorf("unwrapping signed TTL file %q: %w", file, err)
+		}
+		payload = unpacked.Payload
+	}
+	keysets, err := cosesign1.ParseTTLPayload(payload)
+	if err != nil {
+		return nil, fmt.Errorf("parsing TTL file %q: %w", file, err)
+	}
+	return keysets, nil
 }
 
 var createCmd = cli.Command{
@@ -394,10 +430,28 @@ var checkCmd = cli.Command{
 			Name:  "require-receipt-from",
 			Usage: "If set, require at least one attached transparent receipt to have this exact domain as its issuer, and validate it by fetching JWKS from this domain. Any other receipts present are ignored. Issuer matching is an exact equality check, not a subdomain match.",
 		},
+		cli.StringFlag{
+			Name:  "ttl",
+			Usage: "Optional path to a file containing an unsigned Transparency Trust List (TTL) payload, which is a CBOR map from issuer to COSE_KeySet. When a receipt's issuer is present in the TTL, its keys are used to validate the receipt instead of fetching the keys from the ledger.",
+		},
 	},
 	Action: func(ctx *cli.Context) error {
 		didString := ctx.String("did")
 		requireFrom := ctx.String("require-receipt-from")
+		ttlFile := ctx.String("ttl")
+		var ttl map[string]map[string]crypto.PublicKey
+		if ttlFile != "" {
+			var err error
+			ttl, err = parseTTLFile(ttlFile)
+			if err != nil {
+				return fmt.Errorf("failed to load TTL: %w", err)
+			}
+			keys := make([]string, 0, len(ttl))
+			for issuer, keyset := range ttl {
+				keys = append(keys, fmt.Sprintf("%s (%d keys)", issuer, len(keyset)))
+			}
+			logrus.Debugf("TTL contains %d issuers: %s", len(ttl), strings.Join(keys, ", "))
+		}
 		unpacked, err := checkCoseSign1(
 			ctx.String("in"),
 			ctx.String("chain"),
@@ -405,6 +459,7 @@ var checkCmd = cli.Command{
 			ctx.Bool("verbose"),
 			checkCoseSign1Options{
 				RequireReceiptFrom: requireFrom,
+				TTL:                ttl,
 			},
 		)
 		if err != nil {
@@ -623,6 +678,82 @@ var chainCmd = cli.Command{
 	},
 }
 
+var dumpTTLCmd = cli.Command{
+	Name:  "dump-ttl",
+	Usage: "parse a (signed or unsigned) Transparency Trust List and print its keys as prettified JSON",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:     "in",
+			Usage:    "input TTL file, either a raw unsigned TTL payload or a signed COSE_Sign1 envelope (required)",
+			Required: true,
+		},
+		cli.StringFlag{
+			Name:  "out",
+			Usage: "output JSON file (default: stdout)",
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		ttl, err := parseTTLFile(ctx.String("in"))
+		if err != nil {
+			return fmt.Errorf("failed to load TTL: %w", err)
+		}
+		jsonBytes, err := ttlToJWKSJSON(ttl)
+		if err != nil {
+			return fmt.Errorf("rendering TTL as JSON: %w", err)
+		}
+		if out := ctx.String("out"); out != "" {
+			if err := cosesign1.WriteBlob(out, jsonBytes); err != nil {
+				return fmt.Errorf("failed to write output file: %w", err)
+			}
+		} else {
+			fmt.Fprintf(os.Stdout, "%s\n", string(jsonBytes))
+		}
+		return nil
+	},
+}
+
+var ttlFromLedgerCmd = cli.Command{
+	Name:  "ttl-from-ledger",
+	Usage: "fetch the JWKS for one or more ledgers and write them as an (unsigned) Transparency Trust List",
+	Flags: []cli.Flag{
+		cli.StringSliceFlag{
+			Name:  "ledger",
+			Usage: "ledger name to fetch keys from; may be repeated to include multiple ledgers in the TTL (required)",
+		},
+		cli.StringFlag{
+			Name:     "out",
+			Usage:    "output TTL file (required)",
+			Required: true,
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		ledgers := ctx.StringSlice("ledger")
+		if len(ledgers) == 0 {
+			return fmt.Errorf("at least one --ledger is required")
+		}
+		issuerKeys := make(map[string][]kidWithParsedKey, len(ledgers))
+		for _, ledger := range ledgers {
+			if _, exists := issuerKeys[ledger]; exists {
+				return fmt.Errorf("duplicate --ledger %q", ledger)
+			}
+			_, keyList, err := fetchIssuerJWKS(ledger, []string{ledger}, acceptAndPrintCert)
+			if err != nil {
+				return fmt.Errorf("fetching JWKS from ledger %q: %w", ledger, err)
+			}
+			issuerKeys[ledger] = keyList
+		}
+		ttl, err := encodeTTLPayload(issuerKeys)
+		if err != nil {
+			return fmt.Errorf("encoding TTL: %w", err)
+		}
+		if err := cosesign1.WriteBlob(ctx.String("out"), ttl); err != nil {
+			return fmt.Errorf("failed to write output file: %w", err)
+		}
+		fmt.Fprintf(os.Stdout, "wrote TTL with %d ledger(s) to %s\n", len(issuerKeys), ctx.String("out"))
+		return nil
+	},
+}
+
 func main() {
 	app := cli.NewApp()
 	app.Name = "sign1util"
@@ -649,6 +780,8 @@ func main() {
 		leafCmd,
 		didX509Cmd,
 		chainCmd,
+		dumpTTLCmd,
+		ttlFromLedgerCmd,
 	}
 
 	if err := app.Run(os.Args); err != nil {

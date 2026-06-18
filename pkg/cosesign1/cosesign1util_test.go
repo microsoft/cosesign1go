@@ -244,6 +244,8 @@ const (
 	envelopeReceiptCWTSubject = "scitt.ccf.signature.v1"
 	graftedEnvelopeFile       = "esrp_with_grafted_receipt.cose"
 	graftedEnvelopeJWKSFile   = "esrp_cp_ledger_pub_keys.json"
+	signedTTLFile             = "aci-cc-ttl.ttl.cose"
+	signedTTLJSONFile         = "aci-cc-ttl.ttl.json"
 )
 
 // Test_UnpackTransparentHashEnvelope verifies that a CWT-based envelope's
@@ -397,5 +399,95 @@ func Test_GraftedReceiptIsRejected(t *testing.T) {
 	keys := loadJWKSFile(t, graftedEnvelopeJWKSFile)
 	if err := unpacked.Receipts[0].Validate(keys); err == nil {
 		t.Errorf("grafted receipt unexpectedly passed validation: envelope/receipt mismatch is not checked")
+	}
+}
+
+// Test_ParseSignedTTLKeySet tests TTL parsing with a pre-made TTL. It unwraps
+// the COSE_Sign1 envelope, parses the TTL payload (which exercises
+// ParseKeySetAsMap on the COSE_KeySet carried for each ledger), and compares the
+// recovered keys against the committed JSON dump (produced by `sign1util
+// dump-ttl`).
+func Test_ParseSignedTTLKeySet(t *testing.T) {
+	raw, err := os.ReadFile(signedTTLFile)
+	if err != nil {
+		t.Fatalf("reading %s: %s", signedTTLFile, err)
+	}
+	unpacked, err := UnpackAndValidateCOSE1CertChain(raw)
+	if err != nil {
+		t.Fatalf("UnpackAndValidateCOSE1CertChain failed: %s", err)
+	}
+	keysets, err := ParseTTLPayload(unpacked.Payload)
+	if err != nil {
+		t.Fatalf("ParseTTLPayload failed: %s", err)
+	}
+
+	// Load the expected keys from the committed JSON dump.
+	expectedRaw, err := os.ReadFile(signedTTLJSONFile)
+	if err != nil {
+		t.Fatalf("reading %s: %s", signedTTLJSONFile, err)
+	}
+	var expected map[string]struct {
+		Keys []struct {
+			Kty, Kid, Crv, X, Y string
+		}
+	}
+	if err := json.Unmarshal(expectedRaw, &expected); err != nil {
+		t.Fatalf("parsing %s: %s", signedTTLJSONFile, err)
+	}
+
+	if len(keysets) != len(expected) {
+		t.Fatalf("parsed %d ledgers, expected %d", len(keysets), len(expected))
+	}
+	for issuer, ledger := range expected {
+		keys, ok := keysets[issuer]
+		if !ok {
+			t.Errorf("ledger %q present in JSON but missing from parsed TTL", issuer)
+			continue
+		}
+		if len(keys) != len(ledger.Keys) {
+			t.Errorf("ledger %q has %d keys, expected %d", issuer, len(keys), len(ledger.Keys))
+		}
+		for _, jwk := range ledger.Keys {
+			gotPk, ok := keys[jwk.Kid]
+			if !ok {
+				t.Errorf("ledger %q missing expected kid %q", issuer, jwk.Kid)
+				continue
+			}
+			wantPk := ecdsaPublicKeyFromXY(t, jwk.Crv, jwk.X, jwk.Y)
+			eq, ok := gotPk.(interface{ Equal(crypto.PublicKey) bool })
+			if !ok || !eq.Equal(wantPk) {
+				t.Errorf("ledger %q kid %q public key does not match expected", issuer, jwk.Kid)
+			}
+		}
+	}
+}
+
+// ecdsaPublicKeyFromXY reconstructs an EC public key from its JWK curve name and
+// base64url-encoded coordinates.
+func ecdsaPublicKeyFromXY(t *testing.T, crv, x, y string) *ecdsa.PublicKey {
+	t.Helper()
+	var curve elliptic.Curve
+	switch crv {
+	case "P-256":
+		curve = elliptic.P256()
+	case "P-384":
+		curve = elliptic.P384()
+	case "P-521":
+		curve = elliptic.P521()
+	default:
+		t.Fatalf("unsupported crv %q", crv)
+	}
+	xb, err := base64.RawURLEncoding.DecodeString(x)
+	if err != nil {
+		t.Fatalf("decoding x: %s", err)
+	}
+	yb, err := base64.RawURLEncoding.DecodeString(y)
+	if err != nil {
+		t.Fatalf("decoding y: %s", err)
+	}
+	return &ecdsa.PublicKey{
+		Curve: curve,
+		X:     new(big.Int).SetBytes(xb),
+		Y:     new(big.Int).SetBytes(yb),
 	}
 }
