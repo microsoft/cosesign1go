@@ -29,6 +29,16 @@ jobs:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: 0
+      - run: go build -o sign1util-amd64-darwin ./cmd/sign1util
+        env:
+          GOOS: darwin
+          GOARCH: amd64
+          CGO_ENABLED: 0
+      - run: go build -o sign1util-arm64-darwin ./cmd/sign1util
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: 0
 
       - uses: actions/upload-artifact@v4
         with:
@@ -36,6 +46,8 @@ jobs:
           path: |
             sign1util.exe
             sign1util
+            sign1util-amd64-darwin
+            sign1util-arm64-darwin
 
   draft_release:
     needs: build
@@ -57,3 +69,5 @@ jobs:
           files: |
             sign1util.exe
             sign1util
+            sign1util-amd64-darwin
+            sign1util-arm64-darwin
