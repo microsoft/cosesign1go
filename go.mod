@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/Microsoft/didx509go v0.0.3
-	github.com/fxamacker/cbor/v2 v2.5.0
+	github.com/fxamacker/cbor/v2 v2.9.3
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/urfave/cli v1.22.15
