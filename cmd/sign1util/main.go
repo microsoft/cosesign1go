@@ -782,6 +782,8 @@ func main() {
 		chainCmd,
 		dumpTTLCmd,
 		ttlFromLedgerCmd,
+		createTCBReferenceInfoCmd,
+		dumpTCBReferenceInfoCmd,
 	}
 
 	if err := app.Run(os.Args); err != nil {
