@@ -74,7 +74,11 @@ func tcbReferenceInfoToCBOR(info tcbReferenceInfo) (*tcbReferenceInfoCBOR, error
 		if strings.TrimSpace(entry.CPUModelName) == "" {
 			return nil, fmt.Errorf("cpu_model_name for CPUID %s must not be empty", cpuid)
 		}
-		result.AMDSEVSNP[cbor.ByteString(cpuidBytes)] = amdSEVSNPMinimumTCBCBOR{CPUModelName: entry.CPUModelName, TCB: tcb}
+		key := cbor.ByteString(cpuidBytes)
+		if _, exists := result.AMDSEVSNP[key]; exists {
+			return nil, fmt.Errorf("duplicate CPUID %s", cpuid)
+		}
+		result.AMDSEVSNP[key] = amdSEVSNPMinimumTCBCBOR{CPUModelName: entry.CPUModelName, TCB: tcb}
 	}
 	return result, nil
 }
