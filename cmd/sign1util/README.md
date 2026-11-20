@@ -52,3 +52,43 @@ Print the did:x509 that matches the chain for a given subject. This can be used 
 ### chain
 
 Dumps the PEM formatted cert chain found in the COSE Sign1 document.
+
+### create-tcb-reference-info
+
+Create an unsigned tcb-reference-info CBOR document from a JSON like this:
+
+```json
+{
+  "amd_sev_snp": {
+    "00a00f11": {
+      "cpu_model_name": "AMD EPYC 7763 64-Core Processor",
+      "tcb": "db18000000000004"
+    },
+    "00a10f11": {
+      "cpu_model_name": "AMD EPYC 9V74 80-Core Processor",
+      "tcb": "541700000000000a"
+    }
+  }
+}
+```
+
+```sh
+sign1util create-tcb-reference-info --in tcb_reference_info.json --out tcb_reference_info.cbor
+```
+
+The input JSON has the form `{"amd_sev_snp": {"<cpuid hex>":
+{"cpu_model_name": "...", "tcb": "<tcb hex>"}}}`, with CPUIDs and TCBs as
+lowercase hex (8 and 16 digits). The CBOR payload is `{1: {h'<cpuid>': {1:
+cpu-model-name, 2: h'<tcb>'}}}`, where top-level key 1 represents the AMD
+SEV-SNP TEE architecture and CPUIDs and TCBs are byte strings. The
+expected content type of this CBOR blob is
+`application/vnd.tcb-reference-info.v1+cose`.
+
+### dump-tcb-reference-info
+
+Decode and prints a tcb-reference-info, either COSE signed or unsigned
+CBOR. No signature verification is done in the case of a signed payload.
+
+```sh
+sign1util dump-tcb-reference-info --in tcb_reference_info.bin
+```

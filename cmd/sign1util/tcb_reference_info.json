@@ -1,0 +1,12 @@
+{
+  "amd_sev_snp": {
+    "00a00f11": {
+      "cpu_model_name": "AMD EPYC 7763 64-Core Processor",
+      "tcb": "db18000000000004"
+    },
+    "00a10f11": {
+      "cpu_model_name": "AMD EPYC 9V74 80-Core Processor",
+      "tcb": "541700000000000a"
+    }
+  }
+}
