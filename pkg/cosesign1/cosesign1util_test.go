@@ -57,14 +57,14 @@ func TestMain(m *testing.M) {
 	makeCleanOut, err := exec.Command("make", "clean").CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to clean up: %s\n", err)
-		fmt.Fprintf(os.Stderr, string(makeCleanOut))
+		fmt.Fprint(os.Stderr, string(makeCleanOut))
 		os.Exit(1)
 	}
 
 	outputBytes, err := exec.Command("make", "chain.pem", "infra.rego.cose", "leaf.private.pem").CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to build the required test files: %s", err)
-		fmt.Fprintf(os.Stderr, string(outputBytes))
+		fmt.Fprint(os.Stderr, string(outputBytes))
 		os.Exit(1)
 	}
 	fmt.Println(string(outputBytes))

@@ -1,6 +1,6 @@
 module github.com/Microsoft/cosesign1go
 
-go 1.21
+go 1.27.4
 
 require (
 	github.com/Microsoft/didx509go v0.0.3
