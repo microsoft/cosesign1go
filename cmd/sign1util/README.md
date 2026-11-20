@@ -53,6 +53,29 @@ Print the did:x509 that matches the chain for a given subject. This can be used 
 
 Dumps the PEM formatted cert chain found in the COSE Sign1 document.
 
+### ttl-from-ledger
+
+Fetches the JWKS from one or more ledgers and generates a Transparency
+Trust List (TTL) based on them. This command does not attempt to verify
+the authenticity of the ledgers when fetching the JWKS.
+
+```sh
+sign1util ttl-from-ledger \
+  --ledger esrp-cts-dev.confidential-ledger.azure.com \
+  --ledger esrp-cts-db.confidential-ledger.azure.com \
+  --out ttl.bin
+```
+
+### dump-ttl
+
+Parses a signed or unsigned TTL, then prints the issuer-to-key mapping as
+JSON.
+
+```sh
+sign1util dump-ttl --in ttl.bin
+sign1util dump-ttl --in ttl.bin.cose --out ttl.json
+```
+
 ### create-tcb-reference-info
 
 Create an unsigned tcb-reference-info CBOR document from a JSON like this:
