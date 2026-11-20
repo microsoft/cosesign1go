@@ -2,6 +2,7 @@ package cosesign1
 
 import (
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
@@ -12,6 +13,31 @@ import (
 
 	"github.com/veraison/go-cose"
 )
+
+type deterministicECDSASigner struct {
+	*ecdsa.PrivateKey
+	hash crypto.Hash
+}
+
+func (s deterministicECDSASigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
+	// A nil reader selects RFC 6979 instead of Go's randomized ECDSA signing.
+	return s.PrivateKey.Sign(nil, digest, s.hash)
+}
+
+func newDeterministicECDSASigner(key *ecdsa.PrivateKey, algo cose.Algorithm) (crypto.Signer, error) {
+	var hash crypto.Hash
+	switch algo {
+	case cose.AlgorithmES256:
+		hash = crypto.SHA256
+	case cose.AlgorithmES384:
+		hash = crypto.SHA384
+	case cose.AlgorithmES512:
+		hash = crypto.SHA512
+	default:
+		return nil, fmt.Errorf("unsupported ECDSA algorithm: %v", algo)
+	}
+	return deterministicECDSASigner{PrivateKey: key, hash: hash}, nil
+}
 
 func pem2der(chainPem []byte) []byte {
 	block, rest := pem.Decode(chainPem)
@@ -106,6 +132,16 @@ func CreateCoseSign1(payloadBlob []byte, issuer string, feed string, contentType
 	cryptoSigner, ok := signingKey.(crypto.Signer)
 	if !ok {
 		return nil, fmt.Errorf("signingKey must be of type crypto.Signer")
+	}
+
+	if key, ok := cryptoSigner.(*ecdsa.PrivateKey); ok && saltType == "zero" {
+		// Since Go 1.26 crypto/ecdsa.Sign() ignores saltReader.
+		// https://github.com/golang/go/blob/go1.27.4/src/crypto/ecdsa/ecdsa_legacy.go#L65-L68
+		// We use crypto/ecdsa.PrivateKey.Sign() with a nil reader for deterministic signing.
+		cryptoSigner, err = newDeterministicECDSASigner(key, algo)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var signer cose.Signer
