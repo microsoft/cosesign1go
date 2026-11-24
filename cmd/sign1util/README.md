@@ -59,6 +59,10 @@ Fetches the JWKS from one or more ledgers and generates a Transparency
 Trust List (TTL) based on them. This command does not attempt to verify
 the authenticity of the ledgers when fetching the JWKS.
 
+The TTL uses core deterministic CBOR encoding, so issuer map ordering is
+stable regardless of the order of `--ledger` arguments. Key arrays retain
+the order returned by each ledger's JWKS.
+
 ```sh
 sign1util ttl-from-ledger \
   --ledger esrp-cts-dev.confidential-ledger.azure.com \

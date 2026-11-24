@@ -179,7 +179,11 @@ func encodeTTLPayload(issuerKeys map[string][]kidWithParsedKey) ([]byte, error) 
 			cosesign1.TTL_LedgerEntry_Keys: keySet,
 		}
 	}
-	data, err := cbor.Marshal(payload)
+	mode, err := cbor.CoreDetEncOptions().EncMode()
+	if err != nil {
+		return nil, err
+	}
+	data, err := mode.Marshal(payload)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to encode the TTL payload")
 	}
