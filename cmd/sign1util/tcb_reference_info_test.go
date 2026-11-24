@@ -110,6 +110,7 @@ func TestTCBReferenceInfoRejectsInvalidInput(t *testing.T) {
 		strings.Replace(referenceInfoJSON, `"db18000000000004"`, `"db1800000000000g"`, 1),
 		strings.Replace(referenceInfoJSON, `"AMD EPYC 7763 64-Core Processor"`, `" "`, 1),
 		strings.Replace(referenceInfoJSON, `"cpu_model_name":`, `"typo":`, 1),
+		strings.Replace(referenceInfoJSON, `"minimum_tcb":`, `"tcb":`, 1),
 		referenceInfoJSON + `{}`,
 		referenceInfoJSON + ` garbage`,
 	} {
@@ -200,7 +201,7 @@ func TestTCBReferenceInfoCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got, expected tcbReferenceInfo
+	var got, expected map[string]interface{}
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
