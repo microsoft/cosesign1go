@@ -39,6 +39,12 @@ Also checking a did matches.
 
 Dumps out various parts of the document to help developers understand what information is contained in the wrapping part of the COSE Sign1 document vs the payload.
 
+Use `-raw_out` to also save the raw payload bytes to a file.
+
+```sh
+sign1util print -in input.cose -raw_out payload.bin
+```
+
 ### leaf
 
 In some cases (eg UVM reference info document) the check for a good document is by the leaf public key being as expected. This command allows extracting that key from a given COSE Sign1 document.
