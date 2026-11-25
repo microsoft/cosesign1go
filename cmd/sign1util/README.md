@@ -85,11 +85,11 @@ Create an unsigned tcb-reference-info CBOR document from a JSON like this:
   "amd_sev_snp": {
     "00a00f11": {
       "cpu_model_name": "AMD EPYC 7763 64-Core Processor",
-      "tcb": "db18000000000004"
+      "minimum_tcb": "db18000000000004"
     },
     "00a10f11": {
       "cpu_model_name": "AMD EPYC 9V74 80-Core Processor",
-      "tcb": "541700000000000a"
+      "minimum_tcb": "541700000000000a"
     }
   }
 }
@@ -100,7 +100,7 @@ sign1util create-tcb-reference-info --in tcb_reference_info.json --out tcb_refer
 ```
 
 The input JSON has the form `{"amd_sev_snp": {"<cpuid hex>":
-{"cpu_model_name": "...", "tcb": "<tcb hex>"}}}`, with CPUIDs and TCBs as
+{"cpu_model_name": "...", "minimum_tcb": "<tcb hex>"}}}`, with CPUIDs and TCBs as
 lowercase hex (8 and 16 digits). The CBOR payload is `{1: {h'<cpuid>': {1:
 cpu-model-name, 2: h'<tcb>'}}}`, where top-level key 1 represents the AMD
 SEV-SNP TEE architecture and CPUIDs and TCBs are byte strings. The

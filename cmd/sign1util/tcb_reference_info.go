@@ -34,7 +34,7 @@ type tcbReferenceInfo struct {
 
 type amdSEVSNPMinimumTCB struct {
 	CPUModelName string `json:"cpu_model_name"`
-	TCB          string `json:"tcb"`
+	TCB          string `json:"minimum_tcb"`
 }
 
 // tcbReferenceInfoCBOR is the wire form, with CPUIDs and TCBs as byte strings.
