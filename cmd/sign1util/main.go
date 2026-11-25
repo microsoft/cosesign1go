@@ -485,6 +485,10 @@ var printCmd = cli.Command{
 			Usage: "input COSE Sign1 file",
 			Value: "input.cose",
 		},
+		cli.StringFlag{
+			Name:  "raw_out",
+			Usage: "output raw payload file (optional; diagnostic output still goes to stdout)",
+		},
 		cli.BoolFlag{
 			Name:  "validate-receipts",
 			Usage: "If any receipts are present, validate any attached transparent receipts, fetching necessary keys from the issuer. This does not enforce any condition on the issuer of the receipts, but only checks that they are valid.",
@@ -500,7 +504,7 @@ var printCmd = cli.Command{
 	},
 	Action: func(ctx *cli.Context) error {
 		requireFrom := ctx.String("require-receipt-from")
-		_, err := checkCoseSign1(
+		unpacked, err := checkCoseSign1(
 			ctx.String("in"),
 			"",
 			"",
@@ -513,6 +517,11 @@ var printCmd = cli.Command{
 		)
 		if err != nil {
 			return fmt.Errorf("failed verbose checkCoseSign1: %w", err)
+		}
+		if out := ctx.String("raw_out"); out != "" {
+			if err := cosesign1.WriteBlob(out, unpacked.Payload); err != nil {
+				return fmt.Errorf("failed to write payload: %w", err)
+			}
 		}
 		return nil
 	},
